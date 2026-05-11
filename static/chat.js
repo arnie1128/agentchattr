@@ -2222,7 +2222,7 @@ function setupInput() {
                 items.forEach((el, i) => el.classList.toggle('active', i === mentionMenuIndex));
                 return;
             }
-            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
                 e.preventDefault();
                 const active = items[mentionMenuIndex];
                 if (active) {
@@ -2230,6 +2230,7 @@ function setupInput() {
                 }
                 return;
             }
+            if (e.isComposing) return;
             if (e.key === 'Escape') {
                 menu.classList.add('hidden');
                 mentionMenuVisible = false;
@@ -2251,7 +2252,7 @@ function setupInput() {
                 items.forEach((el, i) => el.classList.toggle('active', i === slashMenuIndex));
                 return;
             }
-            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
                 e.preventDefault();
                 const active = items[slashMenuIndex];
                 if (active) selectSlashCommand(active.querySelector('.slash-cmd').textContent);
@@ -2264,7 +2265,7 @@ function setupInput() {
                 return;
             }
         }
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             sendMessage();
         }
