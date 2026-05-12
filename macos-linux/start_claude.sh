@@ -32,22 +32,39 @@ ensure_venv() {
 }
 
 is_server_running() {
-    lsof -i :8300 -sTCP:LISTEN >/dev/null 2>&1 || \
-    ss -tlnp 2>/dev/null | grep -q ':8300 '
+    port="${AGENTCHATTR_PORT:-8300}"
+    lsof -i :"$port" -sTCP:LISTEN >/dev/null 2>&1 || \
+    ss -tlnp 2>/dev/null | grep -q ":$port "
+}
+
+# Wrap a value in single quotes, escaping any embedded single quote as '\''.
+# Used to safely embed AGENTCHATTR_* values into the auto-start command
+# string passed to osascript / gnome-terminal / xterm.
+shell_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
 ensure_venv
 
 if ! is_server_running; then
+    # New shells spawned via osascript / gnome-terminal / xterm do not
+    # inherit AGENTCHATTR_* from this process, so pass server settings as
+    # explicit run.py flags instead of relying on env propagation.
+    server_cmd=".venv/bin/python run.py"
+    [ -n "$AGENTCHATTR_DATA_DIR" ]      && server_cmd="$server_cmd --data-dir $(shell_quote "$AGENTCHATTR_DATA_DIR")"
+    [ -n "$AGENTCHATTR_PORT" ]          && server_cmd="$server_cmd --port $(shell_quote "$AGENTCHATTR_PORT")"
+    [ -n "$AGENTCHATTR_MCP_HTTP_PORT" ] && server_cmd="$server_cmd --mcp-http-port $(shell_quote "$AGENTCHATTR_MCP_HTTP_PORT")"
+    [ -n "$AGENTCHATTR_MCP_SSE_PORT" ]  && server_cmd="$server_cmd --mcp-sse-port $(shell_quote "$AGENTCHATTR_MCP_SSE_PORT")"
+
     if [ "$(uname -s)" = "Darwin" ]; then
-        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python run.py\"" > /dev/null 2>&1
+        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && $server_cmd\"" > /dev/null 2>&1
     else
         if command -v gnome-terminal >/dev/null 2>&1; then
-            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python run.py; printf 'Press Enter to close... '; read _"
+            gnome-terminal -- sh -c "cd '$(pwd)' && $server_cmd; printf 'Press Enter to close... '; read _"
         elif command -v xterm >/dev/null 2>&1; then
-            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python run.py" &
+            xterm -e sh -c "cd '$(pwd)' && $server_cmd" &
         else
-            .venv/bin/python run.py > data/server.log 2>&1 &
+            eval "$server_cmd" > data/server.log 2>&1 &
         fi
     fi
 
@@ -61,4 +78,4 @@ if ! is_server_running; then
     done
 fi
 
-.venv/bin/python wrapper.py claude
+.venv/bin/python wrapper.py claude "$@"

@@ -59,7 +59,7 @@ brew install tmux    # macOS
 
 Open a terminal in the `macos-linux` folder (right-click → "Open Terminal Here", or `cd` into it) and run a launcher — e.g. `sh start_claude.sh`, `sh start_codex.sh`, `sh start_gemini.sh`, etc.
 
-On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server in a separate terminal window if one isn't already running. The agent opens inside a **tmux** session. Detach with `Ctrl+B, D` — the agent keeps running in the background. Reattach with `tmux attach -t agentchattr-claude`.
+On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server in a separate terminal window if one isn't already running. The agent opens inside a **tmux** session. Detach with `Ctrl+B, D` — the agent keeps running in the background. The wrapper prints the exact `tmux attach -t ...` command for reattaching; the name includes a short project fingerprint so isolated project launches do not collide.
 
 <details>
 <summary>All agent launchers (click to expand)</summary>
@@ -477,6 +477,8 @@ Relative paths resolve against the shell's current directory (not agentchattr's 
 
 Server and wrappers share the same `AGENTCHATTR_*` env vars and the same flag names, so a launcher/profile can run multiple isolated instances by passing matching values to each process. If no flags or env vars are set, `config.toml` is used exactly as before — zero change for existing setups.
 
+**Project template** — for a turnkey setup, copy [`templates/project/`](templates/project/) into your project as `.agentchattr/` and edit its `config.toml`. The template ships platform-specific thin wrappers (`start.sh` / `start_<agent>.sh` on macOS/Linux, `start.cmd` / `start_<agent>.cmd` on Windows) that read `config.toml`, export the `AGENTCHATTR_*` env vars for you, and hand off to the main agentchattr launcher. See [`templates/project/README.md`](templates/project/README.md) for the full walkthrough.
+
 ### API agents (local models)
 
 Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM Studio, vLLM, etc.) to the chat room. API agents get status pills, activity indicators, @mention routing, and multi-instance support — just like the CLI agents.
@@ -597,7 +599,7 @@ Python package dependencies (`fastapi`, `uvicorn`, `mcp`) are listed in `require
 Auto-trigger works on all platforms:
 
 - **Windows** — `wrapper_windows.py` injects keystrokes into the agent's console via Win32 `WriteConsoleInput`. The agent runs as a direct subprocess.
-- **Mac/Linux** — `wrapper_unix.py` runs the agent inside a `tmux` session and injects keystrokes via `tmux send-keys`. Detach with `Ctrl+B, D` to leave the agent running in the background; reattach with `tmux attach -t agentchattr-claude`.
+- **Mac/Linux** — `wrapper_unix.py` runs the agent inside a project-scoped `tmux` session and injects keystrokes via `tmux send-keys`. Detach with `Ctrl+B, D` to leave the agent running in the background; use the wrapper's printed `tmux attach -t ...` command to reattach.
 
 The chat server and web UI are fully cross-platform (Python + browser).
 

@@ -33,7 +33,7 @@ ensure_venv() {
 
 ensure_venv
 
-.venv/bin/python run.py
+.venv/bin/python run.py "$@"
 code=$?
 echo ""
 echo "=== Server exited with code $code ==="

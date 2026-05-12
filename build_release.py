@@ -50,6 +50,7 @@ INCLUDE_DIRS = [
     "windows",
     "macos-linux",
     "session_templates",
+    "templates",
 ]
 
 

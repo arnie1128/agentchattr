@@ -18,8 +18,10 @@ How it works:
   4. The agent picks up the prompt as if the user typed it.
 """
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -387,6 +389,33 @@ def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
     return headers
 
 
+def _safe_tmux_component(value: str, *, fallback: str = "default", max_len: int = 32) -> str:
+    value = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-").lower()
+    return (value or fallback)[:max_len].strip("-") or fallback
+
+
+def _build_tmux_session_name(
+    assigned_name: str,
+    *,
+    project_dir: Path,
+    data_dir: Path,
+    server_port: int,
+    mcp_cfg: dict,
+) -> str:
+    """Build a tmux-global session name that is unique across isolated projects."""
+    fingerprint_src = "|".join([
+        str(project_dir),
+        str(data_dir.resolve()),
+        str(server_port),
+        str(mcp_cfg.get("http_port", "")),
+        str(mcp_cfg.get("sse_port", "")),
+    ])
+    digest = hashlib.sha1(fingerprint_src.encode("utf-8")).hexdigest()[:8]
+    project_hint = _safe_tmux_component(project_dir.name, max_len=24)
+    agent_hint = _safe_tmux_component(assigned_name, fallback="agent", max_len=32)
+    return f"agentchattr-{agent_hint}-{project_hint}-{digest}"
+
+
 # ---------------------------------------------------------------------------
 # Queue watcher
 # ---------------------------------------------------------------------------
@@ -583,11 +612,23 @@ def main():
     parser.add_argument("--mcp-http-port", default=None, help="Override mcp.http_port (int)")
     parser.add_argument("--mcp-sse-port",  default=None, help="Override mcp.sse_port (int)")
     parser.add_argument("--upload-dir",    default=None, help="Override images.upload_dir (path)")
+    parser.add_argument(
+        "--agent-cwd", default=None,
+        help="Override agent working directory (overrides config.cwd). "
+             "Accepts absolute, ~user, or shell-CWD-relative paths.",
+    )
     args, extra = parser.parse_known_args()
 
     agent = args.agent
     agent_cfg = config.get("agents", {}).get(agent, {})
-    cwd = agent_cfg.get("cwd", ".")
+    # cwd resolution priority: --agent-cwd > config.cwd > "."
+    if args.agent_cwd:
+        # CLI relative paths anchor at shell CWD (POSIX convention).
+        cwd = str(Path(args.agent_cwd).expanduser().resolve())
+        cwd_source = "--agent-cwd"
+    else:
+        cwd = agent_cfg.get("cwd", ".")
+        cwd_source = "config.cwd" if "cwd" in agent_cfg else "default"
     command = agent_cfg.get("command", agent)
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -739,7 +780,7 @@ def main():
     elif proxy_url:
         print(f"  Local MCP proxy: {proxy_url}")
     print(f"  @{assigned_name} mentions auto-inject MCP reads")
-    print(f"  Starting {command} in {cwd}...\n")
+    print(f"  Starting {command} in {project_dir} (cwd source: {cwd_source})\n")
 
     def _heartbeat():
         while True:
@@ -868,7 +909,13 @@ def main():
     else:
         from wrapper_unix import get_activity_checker, run_agent
 
-        unix_session_name = f"agentchattr-{assigned_name}"
+        unix_session_name = _build_tmux_session_name(
+            assigned_name,
+            project_dir=project_dir,
+            data_dir=data_dir,
+            server_port=server_port,
+            mcp_cfg=mcp_cfg,
+        )
         _set_activity_checker(get_activity_checker(unix_session_name, trigger_flag=_trigger_flag))
 
     run_kwargs = dict(
