@@ -54,8 +54,18 @@ room_settings: dict = {
     "channels": ["general"],
     "history_limit": "all",
     "contrast": "normal",
+    "theme": "neutral",
+    "ui_scale": 1.25,
+    "chat_scale": 1.5,
     "custom_roles": [],
 }
+
+# Allowed values for UI/chat font scaling (must match dropdown options in
+# static/index.html). Backend rejects anything outside this enum so the UI
+# never persists an untested ratio.
+_UI_SCALE_CHOICES = (1.0, 1.125, 1.25, 1.375)
+_CHAT_SCALE_CHOICES = (1.0, 1.25, 1.5, 1.75, 2.0)
+_THEME_CHOICES = ("neutral", "purple")
 
 # Channel validation
 _CHANNEL_NAME_RE = _re.compile(r'^[a-z0-9][a-z0-9\-]{0,19}$')
@@ -1251,6 +1261,22 @@ async def websocket_endpoint(websocket: WebSocket):
                         pass
                 if "contrast" in new and new["contrast"] in ("normal", "high"):
                     room_settings["contrast"] = new["contrast"]
+                if "theme" in new and new["theme"] in _THEME_CHOICES:
+                    room_settings["theme"] = new["theme"]
+                if "ui_scale" in new:
+                    try:
+                        v = float(new["ui_scale"])
+                        if any(abs(v - c) < 1e-6 for c in _UI_SCALE_CHOICES):
+                            room_settings["ui_scale"] = v
+                    except (ValueError, TypeError):
+                        pass
+                if "chat_scale" in new:
+                    try:
+                        v = float(new["chat_scale"])
+                        if any(abs(v - c) < 1e-6 for c in _CHAT_SCALE_CHOICES):
+                            room_settings["chat_scale"] = v
+                    except (ValueError, TypeError):
+                        pass
                 if "rules_refresh_interval" in new:
                     try:
                         ri = int(new["rules_refresh_interval"])

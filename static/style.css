@@ -1,34 +1,35 @@
 /* agentchattr — dark theme / design tokens */
 
 :root {
-    /* --- Surfaces --- */
-    --bg: #0f0f17;
-    --bg-header: #14141f;
-    --bg-input: #1a1a2e;
-    --bg-msg: #16161f;
-    --bg-msg-hover: #1c1c2a;
-    --bg-elevated: #1e1435;
+    /* --- Surfaces (neutral dark, replaces legacy purple) --- */
+    --bg: #101318;
+    --bg-header: #171b22;
+    --bg-input: #1f2530;
+    --bg-msg: #171c23;
+    --bg-msg-hover: #202733;
+    --bg-elevated: #202633;
     --bg-subtle: rgba(255, 255, 255, 0.04);
     --bg-overlay: rgba(0, 0, 0, 0.5);
 
     /* --- Borders --- */
-    --border: #2a2a3e;
-    --border-strong: #3a3a55;
+    --border: #2a2f3d;
+    --border-strong: #3a4055;
     --border-subtle: rgba(255, 255, 255, 0.06);
 
     /* --- Text --- */
-    --text: #b8b8c8;
-    --text-dim: #6a6a80;
-    --text-system: #555570;
-    --text-on-accent: #fff;
-    --text-muted: #cfc8ea;
+    --text: #e5e7eb;
+    --text-dim: #9ca3af;
+    --text-system: #7c8597;
+    --text-on-accent: #0b1018;
+    --text-muted: #cbd5e1;
 
     /* --- Semantic colors --- */
-    --accent: #7c3aed;
-    --accent-soft: rgba(124, 58, 237, 0.15);
-    --accent-hover: rgba(124, 58, 237, 0.2);
-    --user-color: #a78bfa;
-    --system-color: #555570;
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, 0.15);
+    --accent-hover: rgba(56, 189, 248, 0.22);
+    /* rose-pink — distinct from all 9 agent colors (teal/green/blue/violet/yellow/orange) */
+    --user-color: #f472b6;
+    --system-color: #7c8597;
 
     --success: #34d399;
     --success-soft: rgba(52, 211, 153, 0.2);
@@ -66,11 +67,19 @@
     --radius-xl: 12px;
     --radius-full: 9999px;
 
-    /* --- Typography --- */
-    --fs-xs: 11px;
-    --fs-sm: 12px;
-    --fs-base: 14px;
-    --fs-md: 13px;
+    /* --- Typography scaling (runtime-adjustable via Settings) ---
+       --scale-ui:   applies to UI chrome (header, settings, channels, input)
+       --scale-chat: applies to chat message bubble text, sender, time */
+    --scale-ui: 1.25;
+    --scale-chat: 1.5;
+    --fs-xs: calc(11px * var(--scale-ui));
+    --fs-sm: calc(12px * var(--scale-ui));
+    --fs-base: calc(14px * var(--scale-ui));
+    --fs-md: calc(13px * var(--scale-ui));
+    --fs-lg: calc(16px * var(--scale-ui));
+    --fs-chat-base: calc(14px * var(--scale-chat));
+    --fs-chat-sender: calc(13px * var(--scale-chat));
+    --fs-chat-time: calc(11px * var(--scale-chat));
     --fw-normal: 400;
     --fw-medium: 500;
     --fw-semibold: 600;
@@ -115,7 +124,7 @@
 /* --- Font themes --- */
 
 body {
-    font-size: 14px;
+    font-size: var(--fs-base);
     background: var(--bg);
     color: var(--text);
     height: 100vh;
@@ -124,20 +133,50 @@ body {
 
 body, body.font-sans {
     font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-    font-size: 14px;
+    font-size: var(--fs-base);
 }
 
 body.font-mono {
     font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 }
 
+/* Legacy purple palette — opt-in via Settings → Theme = Purple */
+body.theme-purple {
+    --bg: #0f0f17;
+    --bg-header: #14141f;
+    --bg-input: #1a1a2e;
+    --bg-msg: #16161f;
+    --bg-msg-hover: #1c1c2a;
+    --bg-elevated: #1e1435;
+    --border: #2a2a3e;
+    --border-strong: #3a3a55;
+    --text: #b8b8c8;
+    --text-dim: #6a6a80;
+    --text-system: #555570;
+    --text-on-accent: #ffffff;
+    --text-muted: #cfc8ea;
+    --accent: #7c3aed;
+    --accent-soft: rgba(124, 58, 237, 0.15);
+    --accent-hover: rgba(124, 58, 237, 0.2);
+    --user-color: #a78bfa;
+    --system-color: #555570;
+}
+
+/* Declared after theme overrides so high-contrast wins regardless of theme. */
 body.high-contrast {
+    --text-dim: #b6bdc9;
+    --text-system: #98a1b0;
+    --text-muted: #e2e8f0;
+    --border: #3a4055;
+    --border-subtle: rgba(255, 255, 255, 0.10);
+    --bg-subtle: rgba(255, 255, 255, 0.06);
+}
+
+body.theme-purple.high-contrast {
     --text-dim: #9a9ab0;
     --text-system: #7a7a95;
     --text-muted: #ddd6f5;
     --border: #3a3a55;
-    --border-subtle: rgba(255, 255, 255, 0.10);
-    --bg-subtle: rgba(255, 255, 255, 0.06);
 }
 
 #app {
@@ -177,7 +216,7 @@ header {
 }
 
 header h1 {
-    font-size: 16px;
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--text);
     margin: 0;
@@ -216,7 +255,7 @@ header h1 {
 }
 
 .subtitle {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--text-dim);
 }
 
@@ -343,7 +382,7 @@ header h1 {
 .settings-btn.active {
     color: var(--text);
     border-color: var(--accent);
-    background: rgba(124, 58, 237, 0.12);
+    background: var(--accent-soft);
 }
 
 /* --- Shared close / dismiss button --- */
@@ -398,7 +437,7 @@ header h1 {
 }
 
 .settings-field label {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--text-dim);
     white-space: nowrap;
 }
@@ -411,7 +450,7 @@ header h1 {
     color: var(--text);
     padding: 4px 8px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--fs-md);
     outline: none;
     box-shadow: none;
 }
@@ -818,9 +857,12 @@ main#timeline {
     min-width: 200px;
     overflow-wrap: break-word;
     position: relative;
+    font-size: var(--fs-chat-base);
 }
 
 .message.self .chat-bubble {
+    background: color-mix(in srgb, var(--user-color) 24%, var(--bg-input));
+    border-color: color-mix(in srgb, var(--user-color) 45%, transparent);
     border-top-left-radius: 16px;
     border-top-right-radius: 4px;
 }
@@ -838,6 +880,10 @@ main#timeline {
 
 .message:hover .chat-bubble {
     background: color-mix(in srgb, var(--bubble-color, var(--text-dim)) 15%, var(--bg-msg));
+}
+
+.message.self:hover .chat-bubble {
+    background: color-mix(in srgb, var(--user-color) 30%, var(--bg-input));
 }
 
 /* --- Bubble copy icon (top-right) --- */
@@ -1283,7 +1329,7 @@ main#timeline {
     border: none;
     color: var(--text-dim);
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 500;
     padding: 6px 12px;
     border-radius: var(--radius-md);
@@ -1475,7 +1521,7 @@ main#timeline {
 .msg-hashtag {
     color: var(--accent);
     font-weight: 500;
-    background: rgba(124, 58, 237, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     padding: 1px 4px;
     border-radius: 3px;
     cursor: default;
@@ -1557,7 +1603,7 @@ main#timeline {
 
 .channel-sidebar-header {
     padding: 10px 8px 6px 12px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1573,7 +1619,7 @@ main#timeline {
     background: transparent;
     border: none;
     color: var(--text-dim);
-    font-size: 18px;
+    font-size: var(--fs-lg);
     font-weight: 400;
     line-height: 1;
     cursor: pointer;
@@ -1609,7 +1655,7 @@ main#timeline {
     background: transparent;
     border: none;
     color: var(--text-dim);
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -1624,7 +1670,7 @@ main#timeline {
 }
 
 .channel-sidebar-row.active {
-    background: var(--accent-dim, rgba(171, 134, 185, 0.18));
+    background: var(--accent-soft);
     color: var(--text);
 }
 
@@ -1639,7 +1685,7 @@ main#timeline {
 .channel-sidebar-row-unread {
     background: var(--pending);
     color: var(--text-on-accent);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     min-width: 16px;
     height: 16px;
@@ -1717,7 +1763,7 @@ body.channels-in-sidebar #channel-bar {
     justify-content: center;
     width: 100%;
     padding: 6px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     max-width: 100%;
     overflow: hidden;
     white-space: nowrap;
@@ -1796,7 +1842,7 @@ body.channels-in-sidebar #channel-bar {
     border-radius: var(--radius-sm);
     cursor: pointer;
     border: 1px solid var(--accent);
-    background: rgba(124, 58, 237, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     color: var(--accent);
     transition: background 0.15s, color 0.15s;
 }
@@ -2123,13 +2169,13 @@ body.channels-in-sidebar #channel-bar {
 }
 
 .msg-time {
-    font-size: 11px;
+    font-size: var(--fs-chat-time);
     color: var(--text-dim);
 }
 
 .msg-sender {
     font-weight: 700;
-    font-size: 13px;
+    font-size: var(--fs-chat-sender);
 }
 
 .msg-text {
@@ -2256,14 +2302,14 @@ body.channels-in-sidebar #channel-bar {
 }
 
 .join-text {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--text-dim);
 }
 
 .message.system-msg {
     color: var(--text-system);
     font-style: italic;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     justify-content: center;
     overflow-wrap: break-word;
     text-align: center;
@@ -2291,8 +2337,8 @@ body.channels-in-sidebar #channel-bar {
 .proposal-card {
     max-width: 690px;
     width: 100%;
-    background: rgba(124, 58, 237, 0.06);
-    border: 1px solid rgba(124, 58, 237, 0.15);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-hover);
     border-radius: var(--radius-lg);
     padding: 12px 16px;
 }
@@ -2373,7 +2419,7 @@ body.channels-in-sidebar #channel-bar {
     cursor: pointer;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-.proposal-request-changes:hover { color: var(--accent); background: rgba(124, 58, 237, 0.08); }
+.proposal-request-changes:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
 .proposal-dismiss {
     background: none;
@@ -3143,7 +3189,7 @@ footer {
     color: var(--text-dim);
     padding: 3px 12px;
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -3217,7 +3263,7 @@ footer {
 .sender-label {
     color: var(--user-color);
     font-weight: 600;
-    font-size: 13px;
+    font-size: var(--fs-md);
     padding: 10px 0;
     white-space: nowrap;
     flex-shrink: 0;
@@ -3231,7 +3277,7 @@ footer {
     color: var(--text);
     padding: 10px 14px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--fs-base);
     resize: none;
     outline: none;
     min-height: 40px;
@@ -3291,7 +3337,7 @@ footer {
     padding: 0 20px;
     min-height: 40px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--fs-base);
     font-weight: 600;
     cursor: pointer;
     transition: opacity 0.2s;
@@ -3604,7 +3650,7 @@ footer {
 .sched-pop-submit:hover { opacity: 0.85; }
 
 .input-hint {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--text-dim);
     margin-top: 6px;
 }
@@ -3955,26 +4001,26 @@ footer {
     overflow: visible;
 }
 .hg-svg-layer line {
-    stroke: rgba(124, 58, 237, 0.35);
+    stroke: color-mix(in srgb, var(--accent) 35%, transparent);
     stroke-width: 1;
     fill: none;
 }
 .hg-svg-layer circle.hg-arrow-dot {
-    fill: rgba(124, 58, 237, 0.5);
+    fill: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 /* Spotlight rings on anchor elements (anchored mode only) */
 .hg-spotlight {
     position: fixed;
     z-index: 10000;
-    border: 1.5px solid rgba(124, 58, 237, 0.5);
+    border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
     border-radius: 8px;
     pointer-events: none;
     animation: hgSpotPulse 2s ease-in-out infinite;
 }
 @keyframes hgSpotPulse {
-    0%, 100% { border-color: rgba(124, 58, 237, 0.5); }
-    50% { border-color: rgba(124, 58, 237, 0.8); }
+    0%, 100% { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+    50% { border-color: color-mix(in srgb, var(--accent) 80%, transparent); }
 }
 
 /* --- Rows (anchored desktop mode) --- */
@@ -4207,18 +4253,18 @@ footer {
     top: 8px;
     right: 10px;
     padding: 2px 8px;
-    background: rgba(124, 58, 237, 0.1);
-    border: 1px solid rgba(124, 58, 237, 0.5);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
     border-radius: 4px;
     font-size: 10px;
-    color: rgba(167, 139, 250, 0.9);
+    color: color-mix(in srgb, var(--user-color) 90%, transparent);
     font-weight: 500;
     white-space: nowrap;
     animation: hgPillPulse 2.5s ease-in-out infinite;
 }
 @keyframes hgPillPulse {
-    0%, 100% { border-color: rgba(124, 58, 237, 0.5); }
-    50% { border-color: rgba(124, 58, 237, 0.9); box-shadow: 0 0 8px rgba(124, 58, 237, 0.15); }
+    0%, 100% { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+    50% { border-color: color-mix(in srgb, var(--accent) 90%, transparent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 15%, transparent); }
 }
 
 /* --- Panel mockups (Jobs, Rules) --- */
@@ -4372,8 +4418,8 @@ footer {
 .hg-custom-session {
     margin-top: 8px;
     padding: 8px 12px;
-    background: var(--accent-soft, rgba(124, 58, 237, 0.15));
-    border: 1px solid rgba(124, 58, 237, 0.25);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
     border-radius: 8px;
     font-size: 11px;
     line-height: 1.5;

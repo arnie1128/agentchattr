@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agentchattr</title>
-    <link rel="stylesheet" href="/static/style.css?v=249">
+    <link rel="stylesheet" href="/static/style.css?v=254">
     <link rel="stylesheet" href="/static/sessions.css?v=223">
     <link rel="stylesheet" href="/static/jobs.css?v=223">
     <link rel="icon" href="/static/favicon.ico">
@@ -96,6 +96,32 @@
                 <select id="setting-contrast">
                     <option value="normal">Normal</option>
                     <option value="high">High</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label for="setting-theme">Theme</label>
+                <select id="setting-theme" title="Color palette">
+                    <option value="neutral">Neutral</option>
+                    <option value="purple">Purple (legacy)</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label for="setting-ui-scale">UI size</label>
+                <select id="setting-ui-scale" title="Relative scale for UI chrome (header, settings, channels, input)">
+                    <option value="1">100%</option>
+                    <option value="1.125">112.5%</option>
+                    <option value="1.25" selected>125%</option>
+                    <option value="1.375">137.5%</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label for="setting-chat-scale">Msg size</label>
+                <select id="setting-chat-scale" title="Relative scale for chat message text (vs design baseline)">
+                    <option value="1">100%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5" selected>150%</option>
+                    <option value="1.75">175%</option>
+                    <option value="2">200%</option>
                 </select>
             </div>
             <div class="settings-field">
@@ -344,6 +370,6 @@
     <script src="/static/jobs.js?v=224"></script>
     <script src="/static/channels.js?v=224"></script>
     <script src="/static/rules-panel.js?v=223"></script>
-    <script src="/static/chat.js?v=266"></script>
+    <script src="/static/chat.js?v=268"></script>
 </body>
 </html>
