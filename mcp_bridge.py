@@ -74,7 +74,7 @@ _MCP_INSTRUCTIONS = (
     "Do NOT call chat_claim on fresh sessions — it is only for "
     "recovering a previous identity after /resume.\n\n"
     "CRITICAL — Always Respond In Chat:\n"
-    "When you are addressed in a chat message (@yourname or @all agents), you MUST respond using chat_send "
+    "When you are addressed in a chat message (@yourname or @all), you MUST respond using chat_send "
     "in the same channel. NEVER respond only in your terminal/console output. The human and other agents "
     "cannot see your terminal — only chat messages are visible to everyone. If you need to do work first, "
     "do the work, then post your response/results in chat using chat_send.\n\n"

@@ -2142,13 +2142,16 @@ function selectSlashCommand(cmd) {
 // --- Mention autocomplete ---
 
 function getMentionCandidates() {
-    // Build list: registered agents + "all agents" + username (self) + known humans
+    // Build list: registered agents + broadcast mention.
     const candidates = [];
     for (const [name, cfg] of Object.entries(agentConfig)) {
         if (cfg.state === 'pending') continue;
         candidates.push({ name, label: cfg.label || name, color: cfg.color });
     }
-    candidates.push({ name: 'all agents', label: 'all agents', color: 'var(--accent)' });
+    // Broadcast mention. Label shown to the user matches the inserted text
+    // (`@all`), so the picker can't suggest a multi-word form that the router
+    // doesn't recognize. `aliases` keeps `all agents` searchable for muscle memory.
+    candidates.push({ name: 'all', label: 'all', aliases: ['all agents'], color: 'var(--accent)' });
     return candidates;
 }
 
@@ -2186,9 +2189,14 @@ function updateMentionMenu() {
     mentionMenuStart = atPos;
 
     const candidates = getMentionCandidates();
-    const matches = candidates.filter(c =>
-        c.name.toLowerCase().includes(query) || c.label.toLowerCase().includes(query)
-    );
+    const matches = candidates.filter(c => {
+        if (c.name.toLowerCase().includes(query)) return true;
+        if (c.label.toLowerCase().includes(query)) return true;
+        if (Array.isArray(c.aliases)) {
+            return c.aliases.some(a => a.toLowerCase().includes(query));
+        }
+        return false;
+    });
 
     if (matches.length === 0) {
         menu.classList.add('hidden');
