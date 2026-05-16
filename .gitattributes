@@ -3,3 +3,10 @@
 
 # Force LF for Unix-specific Python wrapper
 wrapper_unix.py text eol=lf
+
+# Force CRLF for Windows batch files; cmd.exe mis-parses LF-only .bat
+# when invoked via `call` from a .cmd wrapper, emitting spurious
+# "'M' is not recognized" noise and breaking `if (...)` blocks that
+# contain echo/REM with batch metacharacters.
+*.bat text eol=crlf
+*.cmd text eol=crlf
