@@ -173,7 +173,26 @@ class SessionEngine:
     # --- Engine core ---
 
     def _advance(self, session: dict, message_id: int):
-        """Advance session after the expected agent has responded."""
+        """Advance session after the expected agent has responded.
+
+        Holds self._lock across the whole decide-and-mutate so two timers
+        scheduled off near-simultaneous messages cannot both advance. The
+        snapshot carried by the Timer may be stale by the time it fires, so
+        re-read the live session and bail if its pointers have already moved
+        past the turn this call was scheduled for (BUG-1: otherwise the second
+        advance steps current_turn again and silently skips a participant).
+        """
+        with self._lock:
+            live = self._store.get(session["id"])
+            if not live or live.get("state") in ("complete", "interrupted"):
+                return
+            if (live.get("current_phase") != session.get("current_phase") or
+                    live.get("current_turn") != session.get("current_turn")):
+                return
+            self._advance_locked(session, message_id)
+
+    def _advance_locked(self, session: dict, message_id: int):
+        """Decide and apply the next session step. Caller holds self._lock."""
         tmpl = self._store.get_template(session["template_id"])
         if not tmpl:
             self._store.interrupt(session["id"], "template not found")
