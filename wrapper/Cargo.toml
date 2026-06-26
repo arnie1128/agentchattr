@@ -19,3 +19,4 @@ tiny_http = "0.12.0"
 toml = "1.1.2"
 ureq = { version = "3.3.0", default-features = false, features = ["json"] }
 which = "8.0.4"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }

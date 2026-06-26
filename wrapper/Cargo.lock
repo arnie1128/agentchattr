@@ -16,6 +16,7 @@ dependencies = [
  "toml",
  "ureq",
  "which",
+ "windows-sys",
 ]
 
 [[package]]

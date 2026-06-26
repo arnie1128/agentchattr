@@ -458,6 +458,32 @@ fn node_shim_target(cmd_path: &Path) -> Option<String> {
     None
 }
 
+/// Enable VT input on stdin (so ESC / arrows / function keys arrive as byte
+/// sequences we can forward to the PTY, instead of being dropped as INPUT_RECORD
+/// events) and VT processing on stdout (so the agent's colours/cursor render).
+/// No-op off Windows.
+#[cfg(windows)]
+fn enable_vt_io() {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let hin = GetStdHandle(STD_INPUT_HANDLE);
+        let mut m = 0u32;
+        if GetConsoleMode(hin, &mut m) != 0 {
+            SetConsoleMode(hin, m | ENABLE_VIRTUAL_TERMINAL_INPUT);
+        }
+        let hout = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut m = 0u32;
+        if GetConsoleMode(hout, &mut m) != 0 {
+            SetConsoleMode(hout, m | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+}
+#[cfg(not(windows))]
+fn enable_vt_io() {}
+
 /// Prefer the install's venv Python, else `python` on PATH.
 fn find_python(install_root: &Path) -> std::ffi::OsString {
     #[cfg(windows)]
@@ -763,6 +789,7 @@ fn run_agent(opts: RunOpts) -> Result<()> {
         // restart window so Ctrl+C there becomes a quit signal (the Ctrl+C fix).
         let code = {
             let _raw = pty::RawModeGuard::enable().ok();
+            enable_vt_io(); // ESC/arrows come through as bytes; agent output renders
             *shared_writer.lock().unwrap() = Some(host.writer());
             let reader = host.reader()?;
             let out_thread = std::thread::spawn({
