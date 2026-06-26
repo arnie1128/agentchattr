@@ -120,6 +120,20 @@ fn resolve(agent: &str, cfg: &AgentCfg) -> Option<Resolved> {
     Some(r)
 }
 
+/// The resolved injection mode for an agent (`"flag"`, `"proxy_flag"`, …), or
+/// `None` if the agent has no MCP injection. Lets the launcher decide whether to
+/// start the identity proxy.
+pub fn mode_for(agent: &str, cfg: &AgentCfg) -> Option<String> {
+    resolve(agent, cfg).map(|r| r.mode)
+}
+
+/// The configured MCP transport for an agent (defaults to `"http"`).
+pub fn transport_for(agent: &str, cfg: &AgentCfg) -> String {
+    resolve(agent, cfg)
+        .map(|r| r.transport)
+        .unwrap_or_else(|| "http".to_string())
+}
+
 fn server_url(http_port: u16, sse_port: u16, transport: &str) -> String {
     if transport == "sse" {
         format!("http://127.0.0.1:{sse_port}/sse")

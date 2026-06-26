@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::path::Path;
 
+#[derive(Clone)]
 pub struct ServerClient {
     base: String,
 }

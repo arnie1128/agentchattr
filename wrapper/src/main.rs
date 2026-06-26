@@ -8,6 +8,7 @@
 
 mod activity;
 mod config;
+mod identity;
 mod mcp;
 mod prompt;
 mod pty;
@@ -16,10 +17,11 @@ mod watcher;
 
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -35,6 +37,10 @@ fn main() -> Result<()> {
         }
         Some("config") => dump_config(args.get(2).map(PathBuf::from)),
         Some("ping") => ping(args.get(2).and_then(|s| s.parse().ok())),
+        Some("run-agent") => {
+            let opts = parse_run_args(&args[2..])?;
+            run_agent(opts)
+        }
         _ => {
             eprintln!("agentchattr-wrapper (M0/M1 prototype)");
             eprintln!("usage:");
@@ -42,6 +48,8 @@ fn main() -> Result<()> {
             eprintln!("  agentchattr-wrapper run <cmd> [args]  # host <cmd> in a PTY, interactive");
             eprintln!("  agentchattr-wrapper config [root]     # load + print resolved config");
             eprintln!("  agentchattr-wrapper ping [port]       # smoke-test the server contract");
+            eprintln!("  agentchattr-wrapper run-agent <name> [--port P] [--root DIR] [--label L]");
+            eprintln!("        [--agent-cwd DIR] [--no-restart] [--exec \"CMD ARGS\"]");
             std::process::exit(2);
         }
     }
@@ -254,4 +262,360 @@ fn run_interactive(argv: &[String]) -> Result<()> {
     // The stdin thread may be blocked in read(); the process exit reaps it.
     eprintln!("\r\n[agentchattr-wrapper] agent exited (code {code})");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// run-agent — the assembled wrapper (config → register → inject → PTY + threads)
+// ---------------------------------------------------------------------------
+
+struct RunOpts {
+    agent: String,
+    root: PathBuf,
+    overrides: config::Overrides,
+    label: Option<String>,
+    agent_cwd: Option<String>,
+    no_restart: bool,
+    /// Raw command override (wraps an arbitrary command with no MCP injection).
+    exec: Option<String>,
+}
+
+fn parse_run_args(args: &[String]) -> Result<RunOpts> {
+    let mut agent: Option<String> = None;
+    let mut o = config::Overrides::default();
+    let mut root: Option<PathBuf> = None;
+    let mut label = None;
+    let mut agent_cwd = None;
+    let mut no_restart = false;
+    let mut exec = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" => {
+                i += 1;
+                o.port = args.get(i).and_then(|v| v.parse().ok());
+            }
+            "--mcp-http-port" => {
+                i += 1;
+                o.mcp_http_port = args.get(i).and_then(|v| v.parse().ok());
+            }
+            "--mcp-sse-port" => {
+                i += 1;
+                o.mcp_sse_port = args.get(i).and_then(|v| v.parse().ok());
+            }
+            "--data-dir" => {
+                i += 1;
+                o.data_dir = args.get(i).cloned();
+            }
+            "--root" => {
+                i += 1;
+                root = args.get(i).map(PathBuf::from);
+            }
+            "--label" => {
+                i += 1;
+                label = args.get(i).cloned();
+            }
+            "--agent-cwd" => {
+                i += 1;
+                agent_cwd = args.get(i).cloned();
+            }
+            "--exec" => {
+                i += 1;
+                exec = args.get(i).cloned();
+            }
+            "--no-restart" => no_restart = true,
+            other if !other.starts_with("--") && agent.is_none() => {
+                agent = Some(other.to_string());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let agent = agent.ok_or_else(|| anyhow::anyhow!("run-agent requires an agent name"))?;
+    let root = root
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    Ok(RunOpts {
+        agent,
+        root,
+        overrides: o,
+        label,
+        agent_cwd,
+        no_restart,
+        exec,
+    })
+}
+
+fn run_agent(opts: RunOpts) -> Result<()> {
+    let cfg = config::load(&opts.root, &opts.overrides)?;
+    let server_port = cfg.server.port;
+    let data_dir = cfg.data_dir_path(&opts.root);
+    std::fs::create_dir_all(&data_dir)?;
+    let agent_cfg = cfg.agents.get(&opts.agent).cloned().unwrap_or_default();
+
+    let cwd = opts
+        .agent_cwd
+        .clone()
+        .or_else(|| agent_cfg.cwd.clone())
+        .unwrap_or_else(|| ".".to_string());
+    let project_dir = {
+        let p = opts.root.join(&cwd);
+        p.canonicalize().unwrap_or(p)
+    };
+
+    let client = server::ServerClient::new(server_port);
+    if !client.is_up() {
+        anyhow::bail!("agentchattr server not reachable on :{server_port} — start it first");
+    }
+    let reg = client.register(&opts.agent, opts.label.as_deref())?;
+    println!("  Registered as: {} (slot {})", reg.name, reg.slot);
+    let identity = Arc::new(identity::Identity::new(
+        reg.name.clone(),
+        reg.token.clone(),
+        data_dir.clone(),
+    ));
+    let is_multi = reg.slot > 1;
+    let _ = std::fs::write(identity.queue_path(), "");
+
+    // Command + MCP injection (+ identity proxy for proxy_flag agents).
+    let mut proxy: Option<Arc<mcp::proxy::McpProxy>> = None;
+    let (command, launch_args, inject_env): (String, Vec<String>, BTreeMap<String, String>) =
+        if let Some(exec) = &opts.exec {
+            let mut parts: Vec<String> = exec.split_whitespace().map(str::to_string).collect();
+            anyhow::ensure!(!parts.is_empty(), "--exec needs a command");
+            let cmd = parts.remove(0);
+            (cmd, parts, BTreeMap::new())
+        } else {
+            let command = agent_cfg.command.clone().unwrap_or_else(|| opts.agent.clone());
+            let proxy_url = if mcp::inject::mode_for(&opts.agent, &agent_cfg).as_deref()
+                == Some("proxy_flag")
+            {
+                let upstream = format!("http://127.0.0.1:{}", cfg.mcp.http_port);
+                let p = Arc::new(mcp::proxy::McpProxy::new(
+                    &upstream,
+                    cfg.mcp.http_port,
+                    &reg.name,
+                    &reg.token,
+                ));
+                let port = p.start()?;
+                println!("  MCP identity proxy on :{port}");
+                let url = format!("{}/mcp", p.url());
+                proxy = Some(p);
+                Some(url)
+            } else {
+                None
+            };
+            let inj = mcp::inject::apply(
+                &opts.agent,
+                &agent_cfg,
+                &reg.name,
+                &data_dir,
+                proxy_url.as_deref(),
+                &reg.token,
+                cfg.mcp.http_port,
+                cfg.mcp.sse_port,
+                &project_dir,
+            )?;
+            if let Some(sp) = &inj.settings_path {
+                println!("  MCP config: {}", sp.display());
+            }
+            (command, inj.launch_args, inj.inject_env)
+        };
+
+    let counter = activity::ActivityCounter::new();
+    let shared_writer: Arc<Mutex<Option<pty::PtyWriter>>> = Arc::new(Mutex::new(None));
+
+    // Heartbeat thread: rename adoption + 409 recovery.
+    std::thread::spawn({
+        let client = client.clone();
+        let identity = Arc::clone(&identity);
+        let proxy = proxy.clone();
+        let data_dir = data_dir.clone();
+        let agent = opts.agent.clone();
+        let label = opts.label.clone();
+        move || heartbeat_loop(client, identity, proxy, data_dir, agent, label)
+    });
+
+    // Activity reporter thread.
+    std::thread::spawn({
+        let client = client.clone();
+        let identity = Arc::clone(&identity);
+        let counter = Arc::clone(&counter);
+        move || activity_loop(client, identity, counter)
+    });
+
+    // Queue watcher thread: injects into the current PTY via shared_writer.
+    std::thread::spawn({
+        let watcher = watcher::Watcher::new(client.clone(), opts.agent.clone(), is_multi);
+        let id_snap = Arc::clone(&identity);
+        let id_tok = Arc::clone(&identity);
+        let sw = Arc::clone(&shared_writer);
+        let counter = Arc::clone(&counter);
+        let get_identity = move || id_snap.snapshot();
+        let get_token = move || id_tok.token();
+        let inject = move |text: &str| {
+            if let Some(w) = sw.lock().unwrap().as_ref() {
+                if let Ok(mut g) = w.lock() {
+                    let _ = g.write_all(text.as_bytes());
+                    let _ = g.write_all(b"\r");
+                    let _ = g.flush();
+                }
+            }
+        };
+        let on_trigger = move || counter.set_trigger();
+        move || watcher::run(watcher, get_identity, get_token, inject, on_trigger)
+    });
+
+    println!("  Starting {} in {}", command, project_dir.display());
+
+    // Run loop: spawn the agent in a PTY, pump I/O, restart unless --no-restart.
+    loop {
+        let mut cmd = CommandBuilder::new(&command);
+        for a in &launch_args {
+            cmd.arg(a);
+        }
+        cmd.cwd(&project_dir);
+        cmd.env_remove("CLAUDECODE");
+        for v in &agent_cfg.strip_env {
+            cmd.env_remove(v);
+        }
+        for (k, v) in &inject_env {
+            cmd.env(k, v);
+        }
+
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((120, 30));
+        let size = PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut host = pty::PtyHost::spawn(cmd, size).context("spawning agent in PTY")?;
+        let _raw = pty::RawModeGuard::enable().ok(); // best-effort (no-op without a TTY)
+        *shared_writer.lock().unwrap() = Some(host.writer());
+
+        let reader = host.reader()?;
+        let out_thread = std::thread::spawn({
+            let counter = Arc::clone(&counter);
+            move || pump_output(reader, counter)
+        });
+        let in_writer = host.writer();
+        std::thread::spawn(move || pump_input(in_writer));
+
+        let code = host.wait()?;
+        *shared_writer.lock().unwrap() = None;
+        let _ = out_thread.join();
+
+        if opts.no_restart {
+            break;
+        }
+        println!(
+            "\r\n  {} exited (code {code}). Restarting in 3s... (Ctrl+C to quit)",
+            opts.agent
+        );
+        std::thread::sleep(Duration::from_secs(3));
+    }
+
+    let (name, _) = identity.snapshot();
+    let _ = client.deregister(&name, &identity.token());
+    println!("  Deregistered {name}");
+    // Worker threads (heartbeat/activity/watcher) and portable-pty's internal
+    // ConPTY pump threads are detached; exit explicitly so the wrapper returns
+    // to the shell promptly instead of lingering on them.
+    std::process::exit(0);
+}
+
+fn heartbeat_loop(
+    client: server::ServerClient,
+    identity: Arc<identity::Identity>,
+    proxy: Option<Arc<mcp::proxy::McpProxy>>,
+    data_dir: PathBuf,
+    agent: String,
+    label: Option<String>,
+) {
+    loop {
+        std::thread::sleep(Duration::from_secs(5));
+        let name = identity.name();
+        let token = identity.token();
+        match client.heartbeat(&name, &token, None) {
+            Ok(server::Heartbeat::Ok { name: server_name }) => {
+                if server_name != name && identity.set(Some(&server_name), None) {
+                    if let Some(p) = &proxy {
+                        p.set_identity(&server_name, &identity.token());
+                    }
+                    println!("  Identity updated: {name} -> {server_name}");
+                }
+            }
+            Ok(server::Heartbeat::Conflict) => {
+                if let Ok(reg) = client.register(&agent, label.as_deref()) {
+                    identity.set(Some(&reg.name), Some(&reg.token));
+                    if let Some(p) = &proxy {
+                        p.set_identity(&reg.name, &reg.token);
+                    }
+                    server::write_recovery_flag(&data_dir, &reg.name);
+                    println!("  Session recovered as {}", reg.name);
+                }
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+fn activity_loop(
+    client: server::ServerClient,
+    identity: Arc<identity::Identity>,
+    counter: Arc<activity::ActivityCounter>,
+) {
+    let mut state = activity::ActivityState::new(counter);
+    let mut last_active: Option<bool> = None;
+    let mut last_report = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let active = state.poll();
+        let elapsed = Instant::now().duration_since(last_report);
+        let should = last_active != Some(active)
+            || (active && elapsed >= Duration::from_secs(3))
+            || (!active && elapsed >= Duration::from_secs(8));
+        if should {
+            let _ = client.heartbeat(&identity.name(), &identity.token(), Some(active));
+            last_active = Some(active);
+            last_report = Instant::now();
+        }
+    }
+}
+
+fn pump_output(mut reader: Box<dyn Read + Send>, counter: Arc<activity::ActivityCounter>) {
+    let mut stdout = std::io::stdout();
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                counter.add_bytes(n);
+                if stdout.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+                let _ = stdout.flush();
+            }
+        }
+    }
+}
+
+fn pump_input(writer: pty::PtyWriter) {
+    let mut stdin = std::io::stdin();
+    let mut buf = [0u8; 1024];
+    loop {
+        match stdin.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if let Ok(mut w) = writer.lock() {
+                    if w.write_all(&buf[..n]).is_err() {
+                        break;
+                    }
+                    let _ = w.flush();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
 }

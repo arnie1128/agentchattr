@@ -6,7 +6,6 @@
 use crate::prompt;
 use crate::server::ServerClient;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Drain a queue file: read all lines, truncate it, return the lines. Empty if
@@ -22,9 +21,10 @@ pub fn drain_queue(path: &Path) -> Vec<String> {
 }
 
 /// Stateful prompt builder for the watcher loop. Tracks rules epoch, trigger
-/// count, and the first-mention identity hint.
-pub struct Watcher<'a> {
-    server: &'a ServerClient,
+/// count, and the first-mention identity hint. Owns a cloned `ServerClient` so
+/// it can run on its own thread.
+pub struct Watcher {
+    server: ServerClient,
     base_agent: String,
     is_multi_instance: bool,
     default_refresh: i64,
@@ -33,8 +33,8 @@ pub struct Watcher<'a> {
     trigger_count: u64,
 }
 
-impl<'a> Watcher<'a> {
-    pub fn new(server: &'a ServerClient, base_agent: String, is_multi_instance: bool) -> Self {
+impl Watcher {
+    pub fn new(server: ServerClient, base_agent: String, is_multi_instance: bool) -> Self {
         Self {
             server,
             base_agent,
@@ -102,21 +102,21 @@ impl<'a> Watcher<'a> {
 /// Run the watcher loop forever: poll the queue every second; on a trigger,
 /// signal activity, build the prompt, and inject it. `get_identity` /
 /// `get_token` are read each tick so a mid-session rename (M5) is picked up.
+/// `on_trigger` is invoked before the prompt is built so activity is flagged
+/// during the thinking phase.
 pub fn run(
     mut watcher: Watcher,
     get_identity: impl Fn() -> (String, PathBuf),
     get_token: impl Fn() -> String,
     inject: impl Fn(&str),
-    trigger_flag: Arc<Mutex<bool>>,
+    on_trigger: impl Fn(),
 ) -> ! {
     loop {
         let (_, queue) = get_identity();
         let lines = drain_queue(&queue);
         if !lines.is_empty() {
             // Signal activity BEFORE injecting so the UI covers the thinking phase.
-            if let Ok(mut f) = trigger_flag.lock() {
-                *f = true;
-            }
+            on_trigger();
             std::thread::sleep(Duration::from_millis(500));
             let (current_name, _) = get_identity();
             let token = get_token();
