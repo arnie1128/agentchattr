@@ -41,6 +41,7 @@ fn main() -> Result<()> {
             let opts = parse_run_args(&args[2..])?;
             run_agent(opts)
         }
+        Some("start-server") => start_server_cmd(&args[2..]),
         _ => {
             eprintln!("agentchattr-wrapper (M0/M1 prototype)");
             eprintln!("usage:");
@@ -50,6 +51,7 @@ fn main() -> Result<()> {
             eprintln!("  agentchattr-wrapper ping [port]       # smoke-test the server contract");
             eprintln!("  agentchattr-wrapper run-agent <name> [--port P] [--root DIR] [--label L]");
             eprintln!("        [--agent-cwd DIR] [--no-restart] [--exec \"CMD ARGS\"]");
+            eprintln!("  agentchattr-wrapper start-server [--root DIR] [--port P]  # server only");
             std::process::exit(2);
         }
     }
@@ -409,6 +411,51 @@ fn start_server(
     }
     cmd.spawn().context("starting agentchattr server")?;
     Ok(())
+}
+
+/// `start-server` — resolve the (possibly per-project) config and start the
+/// Python server only, if it isn't already up. The standalone equivalent of the
+/// template's `start.cmd`.
+fn start_server_cmd(args: &[String]) -> Result<()> {
+    let mut root: Option<PathBuf> = None;
+    let mut o = config::Overrides::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                root = args.get(i).map(PathBuf::from);
+            }
+            "--port" => {
+                i += 1;
+                o.port = args.get(i).and_then(|v| v.parse().ok());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let root = root.unwrap_or_else(discover_root);
+    let inv = config::resolve_invocation(&root, &o, None)?;
+    let cfg = inv.config;
+    let install_root = inv.install_root;
+    let port = cfg.server.port;
+    let data_dir = cfg.data_dir_path(&install_root);
+    std::fs::create_dir_all(&data_dir)?;
+    let client = server::ServerClient::new(port);
+    if client.is_up() {
+        println!("  Server already running on :{port}");
+        return Ok(());
+    }
+    println!("  Starting server on :{port}…");
+    start_server(&install_root, port, &data_dir, cfg.mcp.http_port, cfg.mcp.sse_port)?;
+    for _ in 0..60 {
+        if client.is_up() {
+            println!("  Server is up on :{port}");
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    anyhow::bail!("server did not come up on :{port} within 30s")
 }
 
 fn run_agent(opts: RunOpts) -> Result<()> {
