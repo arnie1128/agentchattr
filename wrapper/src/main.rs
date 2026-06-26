@@ -397,10 +397,22 @@ fn resolve_launch(command: &str) -> Launch {
         .map(|e| e.to_ascii_lowercase());
     let full = resolved.to_string_lossy().into_owned();
     match ext.as_deref() {
-        Some("cmd") | Some("bat") => Launch {
-            program: "cmd.exe".into(),
-            prefix_args: vec!["/c".into(), full],
-        },
+        Some("cmd") | Some("bat") => {
+            // npm/fnm node shims (codex) break interactive stdin under cmd /c
+            // because the real process is node's grandchild. If we can spot the
+            // node script the shim runs, launch node directly instead.
+            if let Some(js) = node_shim_target(&resolved) {
+                Launch {
+                    program: "node".into(),
+                    prefix_args: vec![js],
+                }
+            } else {
+                Launch {
+                    program: "cmd.exe".into(),
+                    prefix_args: vec!["/c".into(), full],
+                }
+            }
+        }
         Some("ps1") => Launch {
             program: "powershell.exe".into(),
             prefix_args: vec![
@@ -416,6 +428,28 @@ fn resolve_launch(command: &str) -> Launch {
             prefix_args: vec![],
         },
     }
+}
+
+/// If `cmd_path` is an npm/node shim (`node "...%dp0%...\X.js" %*`), resolve the
+/// `.js` target against the shim's directory so we can run node directly.
+fn node_shim_target(cmd_path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(cmd_path).ok()?;
+    let dir = cmd_path.parent()?.to_string_lossy().into_owned();
+    for tok in text.split(['"', ' ', '\t', '\r', '\n']) {
+        if !tok.to_ascii_lowercase().ends_with(".js") {
+            continue;
+        }
+        let resolved = tok
+            .replace("%~dp0", &dir)
+            .replace("%dp0%", &dir)
+            .replace("%dp0", &dir)
+            .replace("\\\\", "\\");
+        let pb = PathBuf::from(&resolved);
+        if pb.is_file() {
+            return Some(pb.to_string_lossy().into_owned());
+        }
+    }
+    None
 }
 
 /// Prefer the install's venv Python, else `python` on PATH.
@@ -719,7 +753,22 @@ fn run_agent(opts: RunOpts) -> Result<()> {
                 let sw = Arc::clone(&shared_writer);
                 move || pump_output(reader, counter, sw)
             });
-            let code = host.wait()?;
+            // Poll for child exit AND terminal resize (no SIGWINCH on Windows):
+            // when the window changes size, resize the PTY so the agent re-flows
+            // instead of corrupting and losing input.
+            let mut last_size = (cols, rows);
+            let code = loop {
+                if let Some(c) = host.try_wait()? {
+                    break c;
+                }
+                if let Ok(sz) = crossterm::terminal::size() {
+                    if sz != last_size {
+                        let _ = host.resize(sz.1, sz.0); // (rows, cols)
+                        last_size = sz;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
             *shared_writer.lock().unwrap() = None;
             let _ = out_thread.join();
             code

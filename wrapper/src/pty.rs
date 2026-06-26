@@ -85,6 +85,15 @@ impl PtyHost {
         Ok(status.exit_code())
     }
 
+    /// Non-blocking exit check; returns the exit code if the child has exited.
+    pub fn try_wait(&mut self) -> Result<Option<u32>> {
+        Ok(self
+            .child
+            .try_wait()
+            .context("try_wait failed")?
+            .map(|s| s.exit_code()))
+    }
+
     /// Force-terminate the child (used by the headless selftest cleanup).
     pub fn kill(&mut self) -> Result<()> {
         self.child.kill().context("killing child failed")?;
