@@ -6,11 +6,14 @@
 //! watcher, MCP injection) land in later milestones — see
 //! docs/NATIVE_WRAPPER_REWRITE.md.
 
+mod config;
 mod pty;
+mod server;
 
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,14 +29,65 @@ fn main() -> Result<()> {
             }
             run_interactive(rest)
         }
+        Some("config") => dump_config(args.get(2).map(PathBuf::from)),
+        Some("ping") => ping(args.get(2).and_then(|s| s.parse().ok())),
         _ => {
-            eprintln!("agentchattr-wrapper (M0 prototype)");
+            eprintln!("agentchattr-wrapper (M0/M1 prototype)");
             eprintln!("usage:");
             eprintln!("  agentchattr-wrapper selftest          # headless PTY-core validation");
             eprintln!("  agentchattr-wrapper run <cmd> [args]  # host <cmd> in a PTY, interactive");
+            eprintln!("  agentchattr-wrapper config [root]     # load + print resolved config");
+            eprintln!("  agentchattr-wrapper ping [port]       # smoke-test the server contract");
             std::process::exit(2);
         }
     }
+}
+
+/// Smoke-test the server contract: probe, then register → role → heartbeat →
+/// deregister against a running server.
+fn ping(port: Option<u16>) -> Result<()> {
+    let port = port.unwrap_or(8300);
+    let client = server::ServerClient::new(port);
+    if !client.is_up() {
+        println!("server on :{port} is DOWN");
+        return Ok(());
+    }
+    println!("server on :{port} is up");
+    let reg = client.register("codex", None)?;
+    let token_hint: String = reg.token.chars().take(6).collect();
+    println!(
+        "registered as {} (slot {}), token {token_hint}…",
+        reg.name, reg.slot
+    );
+    if let Some(role) = client.role(&reg.name) {
+        println!("role: {role}");
+    }
+    match client.heartbeat(&reg.name, &reg.token, Some(false))? {
+        server::Heartbeat::Ok { name } => println!("heartbeat ok (name={name})"),
+        server::Heartbeat::Conflict => println!("heartbeat conflict → would re-register"),
+    }
+    client.deregister(&reg.name, &reg.token)?;
+    println!("deregistered {}", reg.name);
+    Ok(())
+}
+
+/// Load config from `root` (default: current dir) and print the resolved view.
+fn dump_config(root: Option<PathBuf>) -> Result<()> {
+    let root = root
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cfg = config::load(&root, &config::Overrides::default())?;
+    println!("server.port      = {}", cfg.server.port);
+    println!("server.data_dir  = {}", cfg.data_dir_path(&root).display());
+    println!("mcp.http_port    = {}", cfg.mcp.http_port);
+    println!("mcp.sse_port     = {}", cfg.mcp.sse_port);
+    println!("agents ({}):", cfg.agents.len());
+    for (name, a) in &cfg.agents {
+        let kind = a.kind.as_deref().unwrap_or("interactive");
+        let inject = a.mcp_inject.as_deref().unwrap_or("(default)");
+        println!("  {name:<10} kind={kind:<11} mcp_inject={inject}");
+    }
+    Ok(())
 }
 
 /// Headless validation of the PTY core: spawn a shell in a PTY, inject a marker
