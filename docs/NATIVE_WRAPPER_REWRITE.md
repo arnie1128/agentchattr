@@ -105,6 +105,27 @@ Faithful behaviours the port must keep, independent of structure:
 - **Restart-on-exit** with a 3 s delay unless `--no-restart`.
 - **cwd resolution priority:** `--agent-cwd` > `config.cwd` > `.`.
 
+### 5.1 macOS / tmux specifics — disposition under the unified model
+
+macOS works correctly today **because** the agent runs inside a tmux PTY, so the
+Mac path is the reference for "correct isolation". But `wrapper_unix.py` carries
+tmux-specific machinery that the direct-PTY model makes unnecessary. Each is
+captured here so nothing is silently dropped during the unification:
+
+| macOS behaviour today | Why it existed | Disposition under PTY model |
+|---|---|---|
+| tmux session name with a project+ports hash (`_build_tmux_session_name`) | stop two isolated projects attaching to the same global tmux session | **Gone — not needed.** Each wrapper owns its own PTY child; there is no global session namespace to collide on. Removes a per-project-isolation pain point. |
+| `env VAR=val` prefix on the tmux command | `subprocess.run(env=)` only set the tmux *client's* env, not the session shell's | **Gone.** The wrapper spawns the agent directly with the right env — no prefix hack. |
+| `tmux send-keys -l` + `Enter` | inject into the session | Write text + `\r` to the PTY master — same one code path as Windows. |
+| `tmux capture-pane` hashing | activity detection | Output-stream activity (§3). |
+| detach / reattach (Ctrl+B D) | keep the agent alive after closing the terminal | **Dropped in v1** (owner does not use it); `Frontend` seam left for later (§6.4). |
+| `_check_tmux()` + tmux install requirement | hard dependency on Mac/Linux | **Gone** — no external multiplexer needed. |
+
+Net: the unified model **deletes the entire tmux dependency and several
+Mac-only workarounds**. The Mac path gets simpler, not more complex — and the
+M0 prototype (§12) must be validated on macOS first, since that is the owner's
+primary platform.
+
 ## 6. Proposed module layout
 
 A Rust crate in its own directory; the Python server stays at repo root
@@ -255,9 +276,10 @@ landed. Don't churn a working server mid-rewrite.
 
 ## 12. Milestones
 
-- **M0 — Prototype (validates §11.1–2).** `portable-pty` hosts codex on Windows
-  + macOS; bidirectional pump; manual text injection lands; Ctrl+C reaches the
-  agent; exit restores the terminal. Go/no-go gate for the whole plan.
+- **M0 — Prototype (validates §11.1–2).** `portable-pty` hosts codex on **macOS
+  first** (owner's primary platform), then Windows; bidirectional pump; manual
+  text injection lands; Ctrl+C reaches the agent; exit restores the terminal.
+  Go/no-go gate for the whole plan.
 - **M1 — Server contract.** config loading, register, heartbeat (+409/rename),
   deregister, recovery flag.
 - **M2 — Queue + prompt + injection.** watcher, prompt build (role/rules),
