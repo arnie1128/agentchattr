@@ -3,6 +3,7 @@
 Called by wrapper.py on Windows. Not imported on other platforms.
 """
 
+import contextlib
 import ctypes
 from ctypes import wintypes
 import subprocess
@@ -67,11 +68,13 @@ def enable_vt_mode(verbose: bool = True):
     FILE_SHARE_WRITE = 0x00000002
     OPEN_EXISTING = 3
 
+    # Only the OUTPUT side. We deliberately do NOT set ENABLE_VIRTUAL_TERMINAL_INPUT
+    # on CONIN$: the agent reads the shared console directly, and forcing VT-input
+    # mode mangles its keystroke/IME handling (a prime suspect for the janky codex
+    # input). Leave the input mode to the agent.
     targets = (
         ("CONOUT$", GENERIC_READ | GENERIC_WRITE,
          ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT, "stdout"),
-        ("CONIN$",  GENERIC_READ | GENERIC_WRITE,
-         ENABLE_VIRTUAL_TERMINAL_INPUT, "stdin"),
     )
 
     for device, access, extra_bits, label in targets:
@@ -336,16 +339,19 @@ def get_activity_checker(pid_holder, agent_name="unknown", trigger_flag=None):
 
 
 def _vt_keepalive_thread():
-    """Re-assert VT mode every 10ms in case the child clears it.
+    """Re-assert VT output mode periodically in case the child clears it.
 
     Newer codex builds appear to call SetConsoleMode themselves around their
     frame draws, sometimes stripping ENABLE_VIRTUAL_TERMINAL_PROCESSING in the
-    process. A one-shot enable at launch wins the first frame then loses; a
-    slow keepalive wins most frames but leaks during redraws. We need to win
-    the race, so we hammer SetConsoleMode at 10ms intervals.
+    process. A one-shot enable at launch wins the first frame then loses, so we
+    re-assert it on a gentle poll. The earlier version hammered SetConsoleMode
+    at 1–10ms to win every frame, but that tight contention with the child's
+    own mode changes was a prime suspect for the janky console input — so the
+    poll is now slow (see `_loop`), trading a rare brief glyph leak for an
+    input path the child fully owns.
 
     Single long-lived CONOUT$ handle (opened once) means each iteration is just
-    one SetConsoleMode syscall — ~100 per second, trivial cost.
+    one SetConsoleMode syscall.
     """
     import threading as _threading
     import time as _time
@@ -378,17 +384,11 @@ def _vt_keepalive_thread():
 
     def _loop():
         mode = wintypes.DWORD(0)
-        # Tight initial burst (1ms × ~500 iters ≈ 0.5s) to win the race against
-        # the child's startup-time SetConsoleMode calls, then settle to a slower
-        # steady-state rate.
-        for _ in range(500):
-            try:
-                if kernel32.GetConsoleMode(out_handle, ctypes.byref(mode)):
-                    if (mode.value & REQUIRED_BITS) != REQUIRED_BITS:
-                        kernel32.SetConsoleMode(out_handle, mode.value | REQUIRED_BITS)
-            except Exception:
-                pass
-            _time.sleep(0.001)
+        # Gentle steady-state poll. The original hammered SetConsoleMode at
+        # 1–10ms to out-race codex's own startup mode changes, but that
+        # contention was a prime suspect for the janky input. Re-asserting VT
+        # output every 200ms restores it within a frame or two of codex
+        # stripping it (a brief glyph leak at worst) without fighting input.
         while True:
             try:
                 if kernel32.GetConsoleMode(out_handle, ctypes.byref(mode)):
@@ -396,38 +396,89 @@ def _vt_keepalive_thread():
                         kernel32.SetConsoleMode(out_handle, mode.value | REQUIRED_BITS)
             except Exception:
                 pass
-            _time.sleep(0.01)
+            _time.sleep(0.2)
 
     t = _threading.Thread(target=_loop, daemon=True, name="vt-keepalive")
     t.start()
 
 
+@contextlib.contextmanager
+def _preserve_console_modes():
+    """Snapshot CONIN$/CONOUT$ console modes on entry and restore them on exit —
+    on EVERY path, including KeyboardInterrupt. The original wrapper never
+    restored them, so once the agent cleared ENABLE_PROCESSED_INPUT on CONIN$
+    (raw-mode TUIs do), Ctrl+C stayed delivered as a raw 0x03 byte and the
+    console looked frozen after the agent exited. Restoring the pre-launch
+    modes is the structural fix for that failure.
+    """
+    INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetConsoleMode.restype = wintypes.BOOL
+    kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.SetConsoleMode.restype = wintypes.BOOL
+
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 0x00000001
+    FILE_SHARE_WRITE = 0x00000002
+    OPEN_EXISTING = 3
+
+    saved = []  # (handle, original_mode) — handles kept open until restore
+    for device in ("CONIN$", "CONOUT$"):
+        handle = kernel32.CreateFileW(
+            device, GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None,
+        )
+        if not handle or handle == INVALID_HANDLE_VALUE:
+            continue
+        mode = wintypes.DWORD(0)
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            saved.append((handle, mode.value))
+        else:
+            kernel32.CloseHandle(handle)
+    try:
+        yield
+    finally:
+        for handle, original in saved:
+            kernel32.SetConsoleMode(handle, original)
+            kernel32.CloseHandle(handle)
+
+
 def run_agent(command, extra_args, cwd, env, queue_file, agent, no_restart, start_watcher, strip_env=None, pid_holder=None, session_name=None, inject_env=None, inject_delay: float = 0.3, enter_backend: str = "console_input"):
     """Run agent as a direct subprocess, inject via Win32 console."""
-    # Newer codex/claude/etc TUIs require VT processing on the parent console;
-    # without this, ANSI escape sequences leak as text into the terminal.
-    # One-shot at startup (with diagnostic print) then a keepalive thread.
-    enable_vt_mode()
-    _vt_keepalive_thread()
+    # Snapshot console modes BEFORE we (or the agent) touch them, so every exit
+    # path restores them — the fix for "Ctrl+C dead / console frozen after the
+    # agent exits". Inside the guard: enable VT output (codex/claude TUIs emit
+    # ANSI directly and need it) plus a gentle keepalive that re-asserts it.
+    with _preserve_console_modes():
+        enable_vt_mode()
+        _vt_keepalive_thread()
 
-    if inject_env:
-        env = {**env, **inject_env}
-    start_watcher(lambda text: inject(text, delay=inject_delay, enter_backend=enter_backend))
+        if inject_env:
+            env = {**env, **inject_env}
+        start_watcher(lambda text: inject(text, delay=inject_delay, enter_backend=enter_backend))
 
-    while True:
-        try:
-            proc = subprocess.Popen([command] + extra_args, cwd=cwd, env=env)
-            if pid_holder is not None:
-                pid_holder[0] = proc.pid
-            proc.wait()
-            if pid_holder is not None:
-                pid_holder[0] = None
+        while True:
+            try:
+                proc = subprocess.Popen([command] + extra_args, cwd=cwd, env=env)
+                if pid_holder is not None:
+                    pid_holder[0] = proc.pid
+                proc.wait()
+                if pid_holder is not None:
+                    pid_holder[0] = None
 
-            if no_restart:
+                if no_restart:
+                    break
+
+                print(f"\n  {agent.capitalize()} exited (code {proc.returncode}).")
+                print(f"  Restarting in 3s... (Ctrl+C to quit)")
+                time.sleep(3)
+            except KeyboardInterrupt:
                 break
-
-            print(f"\n  {agent.capitalize()} exited (code {proc.returncode}).")
-            print(f"  Restarting in 3s... (Ctrl+C to quit)")
-            time.sleep(3)
-        except KeyboardInterrupt:
-            break
