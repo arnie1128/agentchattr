@@ -6,7 +6,6 @@ at runtime, never from config.toml directly.
 Thread-safe: a single threading.Lock guards all mutations.
 """
 
-import colorsys
 import json
 import secrets
 import threading
@@ -14,6 +13,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from naming import derive_color, family_conflict, next_free_slot, parse_name
 
 
 @dataclass
@@ -106,13 +107,11 @@ class RuntimeRegistry:
             taken = {i.slot for i in self._instances.values() if i.base == base}
             reserved = set()
             for rn in self._reserved:
-                rb, rs = self._parse_name(rn)
+                rb, rs = parse_name(rn)
                 if rb == base:
                     reserved.add(rs)
 
-            slot = 1
-            while slot in taken or slot in reserved:
-                slot += 1
+            slot = next_free_slot(taken, reserved)
 
             # When a 2nd instance registers, rename slot-1 from "base" to "base-1"
             # so that no instance shares a name with the base family.  This prevents
@@ -133,7 +132,7 @@ class RuntimeRegistry:
 
             name = base if slot == 1 else f"{base}-{slot}"
             base_cfg = self._bases[base]
-            color = _derive_color(base_cfg.get("color", "#888"), slot)
+            color = derive_color(base_cfg.get("color", "#888"), slot)
 
             if label:
                 lbl = label
@@ -174,7 +173,7 @@ class RuntimeRegistry:
             family = [i for i in self._instances.values() if i.base == base]
             if len(family) == 1:
                 remaining = family[0]
-                r_base, r_slot = self._parse_name(remaining.name)
+                r_base, r_slot = parse_name(remaining.name)
                 if r_base == base and remaining.name != base:
                     old_name = remaining.name
                     del self._instances[old_name]
@@ -182,7 +181,7 @@ class RuntimeRegistry:
                     remaining.slot = 1
                     base_cfg = self._bases.get(base, {})
                     remaining.label = base_cfg.get("label", base.capitalize())
-                    remaining.color = _derive_color(base_cfg.get("color", "#888"), 1)
+                    remaining.color = derive_color(base_cfg.get("color", "#888"), 1)
                     self._instances[base] = remaining
                     self._renames[old_name] = base
                     renamed_back = {"old": old_name, "new": base}
@@ -245,11 +244,11 @@ class RuntimeRegistry:
                 # Rename/reclaim — check collision and family guard
                 if target_name in self._instances and target_name != inst.name:
                     error = f"Already claimed: {target_name}"
-                elif (family_err := self._conflicts_with_other_family(target_name, inst.base)):
+                elif (family_err := family_conflict(target_name, inst.base, self._bases)):
                     error = family_err
                 else:
                     # Check slot collision within same family
-                    t_base, t_slot = self._parse_name(target_name)
+                    t_base, t_slot = parse_name(target_name)
                     if t_base == inst.base:
                         slot_taken = any(
                             i.slot == t_slot and i.name != inst.name
@@ -269,7 +268,7 @@ class RuntimeRegistry:
                         if t_base == inst.base:
                             # Target parses as same family (e.g. 'claude' or 'claude-3')
                             inst.slot = t_slot
-                            inst.color = _derive_color(base_cfg.get("color", "#888"), t_slot)
+                            inst.color = derive_color(base_cfg.get("color", "#888"), t_slot)
                             if t_slot == 1:
                                 inst.label = base_cfg.get("label", inst.base.capitalize())
                             else:
@@ -320,11 +319,11 @@ class RuntimeRegistry:
                 result = _inst_dict(inst)
             elif new_name in self._instances:
                 return f"Already taken: {new_name}"
-            elif (family_err := self._conflicts_with_other_family(new_name, inst.base)):
+            elif (family_err := family_conflict(new_name, inst.base, self._bases)):
                 return family_err
             else:
                 # Check slot collision within same family
-                t_base, t_slot = self._parse_name(new_name)
+                t_base, t_slot = parse_name(new_name)
                 if t_base == inst.base:
                     slot_taken = any(
                         i.slot == t_slot and i.name != old_name
@@ -353,7 +352,7 @@ class RuntimeRegistry:
                 # Update slot + color if it's a numbered family name
                 if t_base == inst.base:
                     inst.slot = t_slot
-                    inst.color = _derive_color(base_cfg.get("color", "#888"), t_slot)
+                    inst.color = derive_color(base_cfg.get("color", "#888"), t_slot)
 
                 self._instances[new_name] = inst
                 self._renames[old_name] = new_name
@@ -423,7 +422,7 @@ class RuntimeRegistry:
             if inst:
                 return inst.base in self._bases
             # Fall back to name parsing for slot names like 'claude-2'
-            base, _ = self._parse_name(name)
+            base, _ = parse_name(name)
             if base in self._bases:
                 return True
             # Treat unregistered custom aliases like 'claude-prime' as belonging
@@ -438,7 +437,7 @@ class RuntimeRegistry:
             if inst:
                 base = inst.base
             else:
-                base, _ = self._parse_name(name)
+                base, _ = parse_name(name)
                 if base not in self._bases:
                     for family in self._bases:
                         if name.startswith(f"{family}-"):
@@ -518,32 +517,6 @@ class RuntimeRegistry:
 
     # --- Internal ---
 
-    def _conflicts_with_other_family(self, name: str, own_base: str) -> str | None:
-        """Check if `name` stomps on another family's namespace.
-
-        Returns an error string if it conflicts, None if safe.
-        Blocks: renaming claude to 'gemini', 'gemini-2', 'codex', etc.
-        Allows: renaming claude to 'cudders', 'claude-prime', etc.
-        """
-        t_base, _ = self._parse_name(name)
-        # If the parsed base matches a known family that isn't ours, block it
-        if t_base in self._bases and t_base != own_base:
-            return f"Name '{name}' conflicts with the {t_base} agent family"
-        # Also block if the raw name exactly matches another family's base
-        if name in self._bases and name != own_base:
-            return f"Name '{name}' is a reserved agent family name"
-        return None
-
-    def _parse_name(self, name: str) -> tuple[str, int]:
-        """Parse 'gemini-2' -> ('gemini', 2), 'gemini' -> ('gemini', 1)."""
-        if "-" in name:
-            prefix, suffix = name.rsplit("-", 1)
-            try:
-                return prefix, int(suffix)
-            except ValueError:
-                pass
-        return name, 1
-
     def clean_renames_for(self, name: str):
         """Remove all rename chain entries pointing to or from `name`."""
         with self._lock:
@@ -575,26 +548,3 @@ def _inst_dict(inst: Instance, include_token: bool = False) -> dict:
     if include_token:
         d["token"] = inst.token
     return d
-
-
-def _derive_color(base_hex: str, slot: int) -> str:
-    """Derive variant color: slot 1 = base, slot N = hue/lightness shifted.
-
-    Pattern: slot 2 = hue +25 deg, L +5%; slot 3 = hue -25 deg, L -5%; etc.
-    """
-    if slot == 1:
-        return base_hex
-    hx = base_hex.lstrip("#")
-    if len(hx) != 6:
-        return base_hex
-    r, g, b = int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16)
-    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
-
-    # Alternating hue shifts with increasing magnitude
-    magnitude = ((slot - 1 + 1) // 2) * 25
-    direction = 1 if slot % 2 == 0 else -1
-    h = (h + direction * magnitude / 360) % 1.0
-    l = max(0.15, min(0.85, l + direction * 0.05))
-
-    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
-    return f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
