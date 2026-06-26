@@ -19,7 +19,7 @@ use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -83,16 +83,22 @@ fn ping(port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
-/// Load config from `root` (default: current dir) and print the resolved view.
+/// Resolve config (honouring a per-project overlay) and print the resolved view.
 fn dump_config(root: Option<PathBuf>) -> Result<()> {
-    let root = root
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
-    let cfg = config::load(&root, &config::Overrides::default())?;
+    let root = root.unwrap_or_else(discover_root);
+    let inv = config::resolve_invocation(&root, &config::Overrides::default(), None)?;
+    let cfg = &inv.config;
+    println!("install_root     = {}", inv.install_root.display());
     println!("server.port      = {}", cfg.server.port);
-    println!("server.data_dir  = {}", cfg.data_dir_path(&root).display());
+    println!(
+        "server.data_dir  = {}",
+        cfg.data_dir_path(&inv.install_root).display()
+    );
     println!("mcp.http_port    = {}", cfg.mcp.http_port);
     println!("mcp.sse_port     = {}", cfg.mcp.sse_port);
+    if let Some(c) = &inv.agent_cwd {
+        println!("agent_cwd        = {c}");
+    }
     println!("agents ({}):", cfg.agents.len());
     for (name, a) in &cfg.agents {
         let kind = a.kind.as_deref().unwrap_or("interactive");
@@ -362,26 +368,86 @@ fn discover_root() -> PathBuf {
     cwd
 }
 
+/// Prefer the install's venv Python, else `python` on PATH.
+fn find_python(install_root: &Path) -> std::ffi::OsString {
+    #[cfg(windows)]
+    let venv = install_root.join(".venv").join("Scripts").join("python.exe");
+    #[cfg(not(windows))]
+    let venv = install_root.join(".venv").join("bin").join("python");
+    if venv.exists() {
+        venv.into_os_string()
+    } else {
+        std::ffi::OsString::from("python")
+    }
+}
+
+/// Start the Python server (`run.py`) detached with the resolved ports/data_dir.
+/// On Windows it gets its own console window, matching the legacy `.bat` flow.
+fn start_server(
+    install_root: &Path,
+    port: u16,
+    data_dir: &Path,
+    http_port: u16,
+    sse_port: u16,
+) -> Result<()> {
+    let python = find_python(install_root);
+    let mut cmd = std::process::Command::new(python);
+    cmd.current_dir(install_root)
+        .arg("run.py")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("--mcp-http-port")
+        .arg(http_port.to_string())
+        .arg("--mcp-sse-port")
+        .arg(sse_port.to_string());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+    }
+    cmd.spawn().context("starting agentchattr server")?;
+    Ok(())
+}
+
 fn run_agent(opts: RunOpts) -> Result<()> {
-    let cfg = config::load(&opts.root, &opts.overrides)?;
+    // Resolve config, honouring a per-project `.agentchattr` overlay.
+    let inv = config::resolve_invocation(&opts.root, &opts.overrides, opts.agent_cwd.as_deref())?;
+    let cfg = inv.config;
+    let install_root = inv.install_root;
     let server_port = cfg.server.port;
-    let data_dir = cfg.data_dir_path(&opts.root);
+    let data_dir = cfg.data_dir_path(&install_root);
     std::fs::create_dir_all(&data_dir)?;
     let agent_cfg = cfg.agents.get(&opts.agent).cloned().unwrap_or_default();
 
-    let cwd = opts
-        .agent_cwd
-        .clone()
-        .or_else(|| agent_cfg.cwd.clone())
-        .unwrap_or_else(|| ".".to_string());
-    let project_dir = {
-        let p = opts.root.join(&cwd);
+    // Agent working directory: project overlay / --agent-cwd wins, else
+    // config.cwd anchored at the install root, else the install root.
+    let project_dir = if let Some(c) = &inv.agent_cwd {
+        let p = PathBuf::from(c);
+        p.canonicalize().unwrap_or(p)
+    } else {
+        let cwd = agent_cfg.cwd.clone().unwrap_or_else(|| ".".to_string());
+        let p = install_root.join(&cwd);
         p.canonicalize().unwrap_or(p)
     };
 
     let client = server::ServerClient::new(server_port);
     if !client.is_up() {
-        anyhow::bail!("agentchattr server not reachable on :{server_port} — start it first");
+        println!("  Server not running on :{server_port} — starting it…");
+        start_server(&install_root, server_port, &data_dir, cfg.mcp.http_port, cfg.mcp.sse_port)?;
+        let mut up = false;
+        for _ in 0..60 {
+            if client.is_up() {
+                up = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        if !up {
+            anyhow::bail!("server did not come up on :{server_port} within 30s");
+        }
+        println!("  Server is up on :{server_port}");
     }
     let reg = client.register(&opts.agent, opts.label.as_deref())?;
     println!("  Registered as: {} (slot {})", reg.name, reg.slot);

@@ -223,6 +223,135 @@ fn resolve_cwd_abs(value: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-project overlay (replaces the template `_load.py`)
+//
+// A project's `.agentchattr/config.toml` doesn't define agents; it points at an
+// install via `[agentchattr] root` and overrides ports / data_dir / agent cwd.
+// Paths in it anchor at the `.agentchattr` directory and accept `~`.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+struct ProjectFile {
+    agentchattr: Option<ProjectInstall>,
+    server: Option<ProjectServerOverlay>,
+    mcp: Option<ProjectMcpOverlay>,
+    agent: Option<ProjectAgentOverlay>,
+}
+#[derive(Deserialize)]
+struct ProjectInstall {
+    root: String,
+}
+#[derive(Deserialize, Default)]
+struct ProjectServerOverlay {
+    port: Option<u16>,
+    data_dir: Option<String>,
+}
+#[derive(Deserialize, Default)]
+struct ProjectMcpOverlay {
+    http_port: Option<u16>,
+    sse_port: Option<u16>,
+}
+#[derive(Deserialize, Default)]
+struct ProjectAgentOverlay {
+    cwd: Option<String>,
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
+/// Expand a leading `~`, then anchor relative paths at `anchor`.
+fn anchor_path(raw: &str, anchor: &Path) -> PathBuf {
+    let expanded = if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        home_dir().map(|h| h.join(rest)).unwrap_or_else(|| PathBuf::from(raw))
+    } else {
+        PathBuf::from(raw)
+    };
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        anchor.join(expanded)
+    };
+    joined.canonicalize().unwrap_or(joined)
+}
+
+/// A fully-resolved invocation: the agent config, the install root (where the
+/// main `config.toml` lives), and the agent's working directory.
+pub struct Invocation {
+    pub config: Config,
+    pub install_root: PathBuf,
+    pub agent_cwd: Option<String>,
+}
+
+/// Resolve config for a run, honouring a per-project overlay.
+///
+/// If `config_dir/config.toml` is a per-project file (`[agentchattr] root`
+/// present), resolve the install root, fold the project's port/data_dir/mcp/cwd
+/// overrides under the CLI overrides, and load the install's main config.
+/// Otherwise treat `config_dir` as the install root directly.
+pub fn resolve_invocation(
+    config_dir: &Path,
+    cli: &Overrides,
+    cli_cwd: Option<&str>,
+) -> Result<Invocation> {
+    let path = config_dir.join("config.toml");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let project: ProjectFile = toml::from_str(&text).unwrap_or_default();
+
+    let Some(install) = project.agentchattr else {
+        // Plain main config — config_dir IS the install root.
+        let config = load(config_dir, cli)?;
+        return Ok(Invocation {
+            config,
+            install_root: config_dir.to_path_buf(),
+            agent_cwd: cli_cwd.map(str::to_string),
+        });
+    };
+
+    let install_root = anchor_path(&install.root, config_dir);
+    let mut o = Overrides::default();
+    if let Some(s) = &project.server {
+        o.port = s.port;
+        if let Some(d) = &s.data_dir {
+            o.data_dir = Some(anchor_path(d, config_dir).to_string_lossy().into_owned());
+        }
+    }
+    if let Some(m) = &project.mcp {
+        o.mcp_http_port = m.http_port;
+        o.mcp_sse_port = m.sse_port;
+    }
+    // CLI overrides win over the project file.
+    if cli.port.is_some() {
+        o.port = cli.port;
+    }
+    if cli.data_dir.is_some() {
+        o.data_dir = cli.data_dir.clone();
+    }
+    if cli.mcp_http_port.is_some() {
+        o.mcp_http_port = cli.mcp_http_port;
+    }
+    if cli.mcp_sse_port.is_some() {
+        o.mcp_sse_port = cli.mcp_sse_port;
+    }
+
+    let config = load(&install_root, &o)?;
+    let agent_cwd = cli_cwd.map(str::to_string).or_else(|| {
+        project
+            .agent
+            .and_then(|a| a.cwd)
+            .map(|c| anchor_path(&c, config_dir).to_string_lossy().into_owned())
+    });
+    Ok(Invocation {
+        config,
+        install_root,
+        agent_cwd,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
