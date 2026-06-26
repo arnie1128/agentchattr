@@ -1,7 +1,30 @@
 # Native wrapper rewrite — plan
 
-Status: **draft for review** · Branch: `rewrite/native-wrapper` · Archive of
-current Python impl: `archive/python-wrapper`
+Status: **M0–M5 built & unit-tested** · Branch: `rewrite/native-wrapper` ·
+Archive of current Python impl: `archive/python-wrapper`
+
+## Progress
+
+The Rust crate lives in `wrapper/` (build notes: `wrapper/BUILD.md`). 42 unit
+tests pass; the build is green on `x86_64-pc-windows-gnu`.
+
+| Milestone | State | Validation |
+|---|---|---|
+| M0 PTY host + selftest | done | headless selftest PASS on Windows ConPTY (spawn + injection + capture) |
+| M1 config + server client | done | 7 unit tests + live register/heartbeat/deregister against a real server |
+| M2 queue watcher + prompt | done | 12 unit tests (parse/prompt/rules/drain) |
+| M3 MCP inject + proxy | done | 14 unit tests (5 modes' file output + sender-stamping + proxy bind) |
+| M4 activity detection | done | 5 unit tests (hysteresis) |
+| M5 run-agent assembly + identity | done | 3 unit tests; live register + spawn + PTY output flow |
+| M6 invocation + distribution | partial | config discovery done; server auto-start, launchers, prebuilt binaries remain |
+
+**Owner-validated items** (need a real terminal + real agents, gate the cutover):
+interactive TUI rendering, keystrokes reaching the agent, Ctrl+C-to-agent, the
+full inject→exit→deregister cycle, and macOS (`openpty`). The headless `--exec`
+smoke confirms register/spawn/output but the wrapped child stalls on ConPTY's
+startup DSR query with no terminal to answer it (same reason the M0 selftest
+auto-replies to DSR) — so the end-to-end interactive path is owner-validated, by
+design.
 
 ## 1. Why
 
