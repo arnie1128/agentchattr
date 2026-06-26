@@ -7,8 +7,10 @@
 //! docs/NATIVE_WRAPPER_REWRITE.md.
 
 mod config;
+mod prompt;
 mod pty;
 mod server;
+mod watcher;
 
 use anyhow::{Context, Result};
 use portable_pty::{CommandBuilder, PtySize};
