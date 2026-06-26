@@ -458,24 +458,19 @@ fn node_shim_target(cmd_path: &Path) -> Option<String> {
     None
 }
 
-/// Enable VT input on stdin (so ALL input — normal keys, ESC, arrows, function
-/// keys, mouse/scroll — arrives as a VT byte stream we read via `ReadFile` and
-/// forward to the PTY) and VT processing on stdout (so the agent renders). We
-/// must NOT read this stream with Rust's `stdin()` (ReadConsoleW), which is
-/// char-based and incompatible with VT input — `pump_input` uses `ReadFile`.
+/// Enable VT processing on stdout so the agent's output (colours, cursor moves)
+/// renders correctly. Input is handled by `pump_input` via crossterm's console
+/// event reader, so we deliberately do NOT set `ENABLE_VIRTUAL_TERMINAL_INPUT`
+/// here — that mode makes the console deliver VT bytes through ReadFile/
+/// ReadConsole, which mangles IME/Unicode input and fought the event reader.
 /// No-op off Windows.
 #[cfg(windows)]
-fn enable_vt_io() {
+fn enable_vt_output() {
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
-        ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        STD_OUTPUT_HANDLE,
     };
     unsafe {
-        let hin = GetStdHandle(STD_INPUT_HANDLE);
-        let mut m = 0u32;
-        if GetConsoleMode(hin, &mut m) != 0 {
-            SetConsoleMode(hin, m | ENABLE_VIRTUAL_TERMINAL_INPUT);
-        }
         let hout = GetStdHandle(STD_OUTPUT_HANDLE);
         let mut m = 0u32;
         if GetConsoleMode(hout, &mut m) != 0 {
@@ -484,7 +479,7 @@ fn enable_vt_io() {
     }
 }
 #[cfg(not(windows))]
-fn enable_vt_io() {}
+fn enable_vt_output() {}
 
 /// Prefer the install's venv Python, else `python` on PATH.
 fn find_python(install_root: &Path) -> std::ffi::OsString {
@@ -791,7 +786,7 @@ fn run_agent(opts: RunOpts) -> Result<()> {
         // restart window so Ctrl+C there becomes a quit signal (the Ctrl+C fix).
         let code = {
             let _raw = pty::RawModeGuard::enable().ok();
-            enable_vt_io(); // ESC/arrows come through as bytes; agent output renders
+            enable_vt_output(); // agent's VT output renders; input via crossterm events
             *shared_writer.lock().unwrap() = Some(host.writer());
             let reader = host.reader()?;
             let out_thread = std::thread::spawn({
@@ -980,35 +975,106 @@ fn forward_input(
     }
 }
 
-/// Windows: read the raw VT input byte stream via `ReadFile` (VT input mode is
-/// enabled in `enable_vt_io`). Rust's `stdin()` can't be used here — it reads
-/// chars via ReadConsoleW, which drops VT/special-key/mouse sequences.
+/// Windows: read console input as high-level key/paste events via crossterm and
+/// translate them into the VT byte sequences a PTY-hosted TUI expects. This is
+/// the robust path: Rust's `stdin()` (ReadConsoleW) drops special keys, and
+/// `ReadFile` + VT-input mode mangles IME/Unicode — crossterm reads the console
+/// input records directly and we own the VT translation.
 #[cfg(windows)]
 fn pump_input(
     sw: Arc<Mutex<Option<pty::PtyWriter>>>,
     client: server::ServerClient,
     identity: Arc<identity::Identity>,
 ) {
-    use windows_sys::Win32::Storage::FileSystem::ReadFile;
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
-    let h = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-    let mut buf = [0u8; 1024];
+    use crossterm::event::{read, Event, KeyEventKind};
     let mut last_ctrl_c = Instant::now() - Duration::from_secs(10);
     loop {
-        let mut n: u32 = 0;
-        let ok = unsafe {
-            ReadFile(
-                h,
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-                &mut n,
-                std::ptr::null_mut(),
-            )
-        };
-        if ok == 0 || n == 0 {
-            break;
+        match read() {
+            // The console reports key press, repeat, AND release — forward
+            // presses and repeats, drop releases (a TUI wants neither double
+            // input nor phantom release bytes).
+            Ok(Event::Key(k)) => {
+                if k.kind == KeyEventKind::Release {
+                    continue;
+                }
+                if let Some(bytes) = key_to_bytes(&k) {
+                    forward_input(&bytes, &sw, &client, &identity, &mut last_ctrl_c);
+                }
+            }
+            Ok(Event::Paste(s)) => {
+                forward_input(s.as_bytes(), &sw, &client, &identity, &mut last_ctrl_c);
+            }
+            Ok(_) => {}
+            Err(_) => break,
         }
-        forward_input(&buf[..n as usize], &sw, &client, &identity, &mut last_ctrl_c);
+    }
+}
+
+/// Translate a crossterm key event into the VT byte sequence a PTY-hosted TUI
+/// expects (xterm-style). Returns None for events that produce no input bytes.
+#[cfg(windows)]
+fn key_to_bytes(key: &crossterm::event::KeyEvent) -> Option<Vec<u8>> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Char(c) => {
+            let mut out = if ctrl {
+                // Ctrl+key → C0 control byte (Ctrl+A=0x01 … Ctrl+Z=0x1a, etc.).
+                match c {
+                    ' ' | '@' => vec![0x00],
+                    'a'..='z' => vec![c as u8 - b'a' + 1],
+                    'A'..='Z' => vec![c as u8 - b'A' + 1],
+                    '[' => vec![0x1b],
+                    '\\' => vec![0x1c],
+                    ']' => vec![0x1d],
+                    '^' => vec![0x1e],
+                    '_' | '/' => vec![0x1f],
+                    _ => c.to_string().into_bytes(), // ctrl + unmapped → send char
+                }
+            } else {
+                // Plain / shifted / IME (incl. CJK) char → its UTF-8 bytes.
+                c.to_string().into_bytes()
+            };
+            if alt {
+                // Alt/Meta prefix: ESC then the char bytes.
+                let mut v = vec![0x1b];
+                v.append(&mut out);
+                out = v;
+            }
+            Some(out)
+        }
+        KeyCode::Enter => Some(vec![b'\r']),
+        KeyCode::Tab => Some(vec![b'\t']),
+        KeyCode::BackTab => Some(b"\x1b[Z".to_vec()),
+        KeyCode::Backspace => Some(vec![0x7f]),
+        KeyCode::Esc => Some(vec![0x1b]),
+        KeyCode::Left => Some(b"\x1b[D".to_vec()),
+        KeyCode::Right => Some(b"\x1b[C".to_vec()),
+        KeyCode::Up => Some(b"\x1b[A".to_vec()),
+        KeyCode::Down => Some(b"\x1b[B".to_vec()),
+        KeyCode::Home => Some(b"\x1b[H".to_vec()),
+        KeyCode::End => Some(b"\x1b[F".to_vec()),
+        KeyCode::PageUp => Some(b"\x1b[5~".to_vec()),
+        KeyCode::PageDown => Some(b"\x1b[6~".to_vec()),
+        KeyCode::Insert => Some(b"\x1b[2~".to_vec()),
+        KeyCode::Delete => Some(b"\x1b[3~".to_vec()),
+        KeyCode::F(n) => Some(match n {
+            1 => b"\x1bOP".to_vec(),
+            2 => b"\x1bOQ".to_vec(),
+            3 => b"\x1bOR".to_vec(),
+            4 => b"\x1bOS".to_vec(),
+            5 => b"\x1b[15~".to_vec(),
+            6 => b"\x1b[17~".to_vec(),
+            7 => b"\x1b[18~".to_vec(),
+            8 => b"\x1b[19~".to_vec(),
+            9 => b"\x1b[20~".to_vec(),
+            10 => b"\x1b[21~".to_vec(),
+            11 => b"\x1b[23~".to_vec(),
+            12 => b"\x1b[24~".to_vec(),
+            _ => return None,
+        }),
+        _ => None,
     }
 }
 
