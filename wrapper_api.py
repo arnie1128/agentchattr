@@ -28,19 +28,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from server_client import ServerClient
+
 ROOT = Path(__file__).parent
-
-
-def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
-    headers = {"Authorization": f"Bearer {token}"}
-    if include_json:
-        headers["Content-Type"] = "application/json"
-    return headers
 
 
 def main():
     from config_loader import apply_cli_overrides, load_config
-    from wrapper import _register_instance
 
     # Apply AGENTCHATTR_* overrides (from CLI flags or env) BEFORE loading
     # config so the API wrapper connects to the same data_dir/ports as a
@@ -74,6 +68,7 @@ def main():
     agent = args.agent
     agent_cfg = config["agents"][agent]
     server_port = config.get("server", {}).get("port", 8300)
+    client = ServerClient(server_port)
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +96,7 @@ def main():
 
     # Register with server
     try:
-        registration = _register_instance(server_port, agent, args.label)
+        registration = client.register(agent, args.label)
     except Exception as exc:
         print(f"  Registration failed ({exc}).")
         print("  Is the server running? Start it with: python run.py")
@@ -144,14 +139,7 @@ def main():
             try:
                 n = get_name()
                 t = get_token()
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{server_port}/api/heartbeat/{n}",
-                    method="POST",
-                    data=json.dumps({"active": is_working()}).encode(),
-                    headers=_auth_headers(t, include_json=True),
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    resp_data = json.loads(resp.read())
+                resp_data = client.heartbeat_active(n, t, is_working())
                 server_name = resp_data.get("name", n)
                 if server_name != n:
                     set_identity(new_name=server_name)
@@ -159,7 +147,7 @@ def main():
             except urllib.error.HTTPError as exc:
                 if exc.code == 409:
                     try:
-                        replacement = _register_instance(server_port, agent, args.label)
+                        replacement = client.register(agent, args.label)
                         set_identity(replacement["name"], replacement["token"])
                         print(f"  Re-registered as: {replacement['name']}")
                     except Exception:
@@ -173,12 +161,7 @@ def main():
     # Get this agent's role from server status
     def get_my_role():
         try:
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{server_port}/api/status",
-                headers=_auth_headers(get_token()),
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                status = json.loads(resp.read())
+            status = client.get_status(get_token())
             my_name = get_name()
             info = status.get(my_name, {})
             return info.get("role", "") if isinstance(info, dict) else ""
@@ -188,12 +171,7 @@ def main():
     # Get online agents from server
     def get_online_agents():
         try:
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{server_port}/api/status",
-                headers=_auth_headers(get_token()),
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                status = json.loads(resp.read())
+            status = client.get_status(get_token())
             online = [n for n, info in status.items()
                       if isinstance(info, dict) and info.get("available")]
             return online
@@ -202,27 +180,11 @@ def main():
 
     # Read recent messages from chat server
     def read_messages(channel="general", since_id=0, limit=20):
-        params = f"limit={limit}&channel={channel}"
-        if since_id:
-            params = f"since_id={since_id}&{params}"
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{server_port}/api/messages?{params}",
-            headers=_auth_headers(get_token()),
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
+        return client.read_messages(get_token(), channel, since_id, limit)
 
     # Send message back to chat
     def send_message(text, channel="general"):
-        body = json.dumps({"text": text, "channel": channel}).encode()
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{server_port}/api/send",
-            method="POST",
-            data=body,
-            headers=_auth_headers(get_token(), include_json=True),
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
+        return client.send_message(get_token(), text, channel)
 
     # Call OpenAI-compatible chat completions API
     def call_model(messages):
@@ -351,13 +313,7 @@ def main():
         try:
             n = get_name()
             t = get_token()
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{server_port}/api/deregister/{n}",
-                method="POST",
-                data=b"",
-                headers=_auth_headers(t),
-            )
-            urllib.request.urlopen(req, timeout=5)
+            client.deregister(n, t)
             print(f"  Deregistered {n}")
         except Exception:
             pass

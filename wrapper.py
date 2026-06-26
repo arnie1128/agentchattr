@@ -28,6 +28,8 @@ import threading
 import time
 from pathlib import Path
 
+from server_client import ServerClient
+
 ROOT = Path(__file__).parent
 
 SERVER_NAME = "agentchattr"
@@ -368,27 +370,6 @@ def _build_provider_launch(
     return launch_args, launch_env, inject_env, settings_path
 
 
-def _register_instance(server_port: int, base: str, label: str | None = None) -> dict:
-    import urllib.request
-
-    reg_body = json.dumps({"base": base, "label": label}).encode()
-    reg_req = urllib.request.Request(
-        f"http://127.0.0.1:{server_port}/api/register",
-        method="POST",
-        data=reg_body,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(reg_req, timeout=5) as reg_resp:
-        return json.loads(reg_resp.read())
-
-
-def _auth_headers(token: str, *, include_json: bool = False) -> dict[str, str]:
-    headers = {"Authorization": f"Bearer {token}"}
-    if include_json:
-        headers["Content-Type"] = "application/json"
-    return headers
-
-
 def _safe_tmux_component(value: str, *, fallback: str = "default", max_len: int = 32) -> str:
     value = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-").lower()
     return (value or fallback)[:max_len].strip("-") or fallback
@@ -439,45 +420,17 @@ _IDENTITY_HINT = (
 
 def _fetch_role(server_port: int, agent_name: str) -> str:
     """Fetch this agent's role from the server status endpoint."""
-    try:
-        import urllib.request
-        req = urllib.request.Request(f"http://127.0.0.1:{server_port}/api/roles")
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            roles = json.loads(resp.read())
-        return roles.get(agent_name, "")
-    except Exception:
-        return ""
+    return ServerClient(server_port).fetch_role(agent_name)
 
 
 def _fetch_active_rules(server_port: int, token: str = "") -> dict | None:
     """Fetch active rules from the server."""
-    try:
-        import urllib.request
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        req = urllib.request.Request(f"http://127.0.0.1:{server_port}/api/rules/active", headers=headers)
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None
+    return ServerClient(server_port).fetch_active_rules(token)
 
 
 def _report_rule_sync(server_port: int, agent_name: str, epoch: int, token: str = ""):
     """Report that this agent has seen rules at the given epoch."""
-    try:
-        import urllib.request
-        body = json.dumps({"epoch": epoch}).encode()
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{server_port}/api/rules/agent_sync/{agent_name}",
-            method="POST",
-            data=body,
-            headers=headers,
-        )
-        urllib.request.urlopen(req, timeout=3)
-    except Exception:
-        pass
+    ServerClient(server_port).report_rule_sync(agent_name, epoch, token)
 
 
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
@@ -588,7 +541,6 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
 def main():
     import argparse
     import urllib.error
-    import urllib.request
 
     from config_loader import apply_cli_overrides, load_config
 
@@ -634,9 +586,10 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
     server_port = config.get("server", {}).get("port", 8300)
     mcp_cfg = config.get("mcp", {})
+    client = ServerClient(server_port)
 
     try:
-        registration = _register_instance(server_port, agent, args.label)
+        registration = client.register(agent, args.label)
     except Exception as exc:
         print(f"  Registration failed ({exc}).")
         print("  Wrapper cannot continue without a registered identity.")
@@ -786,23 +739,15 @@ def main():
         while True:
             current_name, _ = get_identity()
             current_token = get_token()
-            url = f"http://127.0.0.1:{server_port}/api/heartbeat/{current_name}"
             try:
-                req = urllib.request.Request(
-                    url,
-                    method="POST",
-                    data=b"",
-                    headers=_auth_headers(current_token),
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    resp_data = json.loads(resp.read())
+                resp_data = client.heartbeat(current_name, current_token)
                 server_name = resp_data.get("name", current_name)
                 if server_name != current_name:
                     set_runtime_identity(server_name)
             except urllib.error.HTTPError as exc:
                 if exc.code == 409:
                     try:
-                        replacement = _register_instance(server_port, agent, args.label)
+                        replacement = client.register(agent, args.label)
                         set_runtime_identity(replacement["name"], replacement["token"])
                         _notify_recovery(data_dir, replacement["name"])
                     except Exception:
@@ -883,16 +828,7 @@ def main():
                 if should_send:
                     current_name, _ = get_identity()
                     current_token = get_token()
-                    url = f"http://127.0.0.1:{server_port}/api/heartbeat/{current_name}"
-                    body = json.dumps({"active": active}).encode()
-                    req = urllib.request.Request(
-                        url,
-                        method="POST",
-                        data=body,
-                        headers=_auth_headers(current_token, include_json=True),
-                    )
-                    resp = urllib.request.urlopen(req, timeout=5)
-                    resp_code = resp.getcode()
+                    client.heartbeat_active(current_name, current_token, active)
                     last_active = active
                     last_report_time = now
             except Exception:
@@ -944,13 +880,7 @@ def main():
         try:
             current_name, _ = get_identity()
             current_token = get_token()
-            dereg_req = urllib.request.Request(
-                f"http://127.0.0.1:{server_port}/api/deregister/{current_name}",
-                method="POST",
-                data=b"",
-                headers=_auth_headers(current_token),
-            )
-            urllib.request.urlopen(dereg_req, timeout=5)
+            client.deregister(current_name, current_token)
             print(f"  Deregistered {current_name}")
         except Exception:
             pass
