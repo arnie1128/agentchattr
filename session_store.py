@@ -6,6 +6,8 @@ import threading
 import logging
 from pathlib import Path
 
+from atomic_io import write_json_atomic
+
 log = logging.getLogger(__name__)
 
 
@@ -57,10 +59,7 @@ class SessionStore:
             self._sessions = []
 
     def _save(self):
-        self._path.write_text(
-            json.dumps(self._sessions, indent=2, ensure_ascii=False) + "\n",
-            "utf-8",
-        )
+        write_json_atomic(self._path, self._sessions)
 
     # --- Templates ---
 

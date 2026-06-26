@@ -6,6 +6,8 @@ import threading
 import uuid
 from pathlib import Path
 
+from atomic_io import write_json_atomic
+
 
 class JobStore:
     def __init__(self, path: str):
@@ -32,10 +34,7 @@ class JobStore:
             self._jobs = []
 
     def _save(self):
-        self._path.write_text(
-            json.dumps(self._jobs, indent=2, ensure_ascii=False) + "\n",
-            "utf-8",
-        )
+        write_json_atomic(self._path, self._jobs)
 
     def _next_sort_order_locked(self, status: str) -> int:
         max_order = 0
