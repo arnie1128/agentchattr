@@ -50,7 +50,7 @@ fn main() -> Result<()> {
             eprintln!("  agentchattr-wrapper config [root]     # load + print resolved config");
             eprintln!("  agentchattr-wrapper ping [port]       # smoke-test the server contract");
             eprintln!("  agentchattr-wrapper run-agent <name> [--port P] [--root DIR] [--label L]");
-            eprintln!("        [--agent-cwd DIR] [--no-restart] [--exec \"CMD ARGS\"]");
+            eprintln!("        [--agent-cwd DIR] [--restart] [--exec \"CMD ARGS\"]");
             eprintln!("  agentchattr-wrapper start-server [--root DIR] [--port P]  # server only");
             std::process::exit(2);
         }
@@ -282,7 +282,8 @@ struct RunOpts {
     overrides: config::Overrides,
     label: Option<String>,
     agent_cwd: Option<String>,
-    no_restart: bool,
+    /// Restart the agent when it exits (default: exiting the agent exits us).
+    restart: bool,
     /// Raw command override (wraps an arbitrary command with no MCP injection).
     exec: Option<String>,
 }
@@ -293,7 +294,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOpts> {
     let mut root: Option<PathBuf> = None;
     let mut label = None;
     let mut agent_cwd = None;
-    let mut no_restart = false;
+    let mut restart = false;
     let mut exec = None;
     let mut i = 0;
     while i < args.len() {
@@ -330,7 +331,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOpts> {
                 i += 1;
                 exec = args.get(i).cloned();
             }
-            "--no-restart" => no_restart = true,
+            "--restart" => restart = true,
             other if !other.starts_with("--") && agent.is_none() => {
                 agent = Some(other.to_string());
             }
@@ -346,7 +347,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOpts> {
         overrides: o,
         label,
         agent_cwd,
-        no_restart,
+        restart,
         exec,
     })
 }
@@ -402,8 +403,13 @@ fn resolve_launch(command: &str) -> Launch {
             // because the real process is node's grandchild. If we can spot the
             // node script the shim runs, launch node directly instead.
             if let Some(js) = node_shim_target(&resolved) {
+                // Resolve node to a full path — CreateProcessW treats the program
+                // as lpApplicationName and does NOT search PATH for a bare name.
+                let node = which::which("node")
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "node".into());
                 Launch {
-                    program: "node".into(),
+                    program: node,
                     prefix_args: vec![js],
                 }
             } else {
@@ -521,25 +527,34 @@ fn start_server_cmd(args: &[String]) -> Result<()> {
     let root = root.unwrap_or_else(discover_root);
     let inv = config::resolve_invocation(&root, &o, None)?;
     let cfg = inv.config;
-    let install_root = inv.install_root;
+    let install_root = strip_unc(inv.install_root);
     let port = cfg.server.port;
-    let data_dir = cfg.data_dir_path(&install_root);
+    let data_dir = strip_unc(cfg.data_dir_path(&install_root));
     std::fs::create_dir_all(&data_dir)?;
     let client = server::ServerClient::new(port);
     if client.is_up() {
         println!("  Server already running on :{port}");
         return Ok(());
     }
-    println!("  Starting server on :{port}…");
-    start_server(&install_root, port, &data_dir, cfg.mcp.http_port, cfg.mcp.sse_port)?;
-    for _ in 0..60 {
-        if client.is_up() {
-            println!("  Server is up on :{port}");
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    anyhow::bail!("server did not come up on :{port} within 30s")
+    println!("  Starting server on :{port} (Ctrl+C to stop)…");
+    // Run in THIS window (foreground), blocking until the server exits — the log
+    // stays visible and Ctrl+C just returns to the shell prompt.
+    let python = find_python(&install_root);
+    let status = std::process::Command::new(python)
+        .current_dir(&install_root)
+        .arg("run.py")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--data-dir")
+        .arg(&data_dir)
+        .arg("--mcp-http-port")
+        .arg(cfg.mcp.http_port.to_string())
+        .arg("--mcp-sse-port")
+        .arg(cfg.mcp.sse_port.to_string())
+        .status()
+        .context("running server")?;
+    println!("  Server exited ({status}).");
+    Ok(())
 }
 
 fn run_agent(opts: RunOpts) -> Result<()> {
@@ -774,7 +789,7 @@ fn run_agent(opts: RunOpts) -> Result<()> {
             code
         };
 
-        if opts.no_restart {
+        if !opts.restart {
             break;
         }
         println!(
