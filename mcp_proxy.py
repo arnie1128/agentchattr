@@ -1,10 +1,10 @@
 """Per-instance MCP identity proxy.
 
-Sits between an agent CLI and the real agentchattr MCP server.
-Intercepts tool calls and stamps the `sender`/`name` argument
-from the agent's registered identity while forwarding the
-server-issued bearer token, so agents never need to know
-their own name or auth material.
+Sits between an agent CLI and the real agentchattr MCP server and forwards
+the server-issued bearer token on every request, so agents never need to
+know their own auth material. The server derives the sender from that token
+(see mcp_bridge._resolve_tool_identity), so the proxy passes the request
+body through untouched.
 
 Supports both transports:
   - streamable-http (Claude, Codex, Qwen): POST /mcp, GET /mcp, DELETE /mcp
@@ -23,7 +23,6 @@ Usage (from wrapper.py):
     proxy.stop()
 """
 
-import json
 import re
 import threading
 import logging
@@ -34,19 +33,6 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 log = logging.getLogger(__name__)
-
-# MCP tools and which parameter carries the agent identity
-_SENDER_PARAMS = {
-    "chat_send": "sender",
-    "chat_read": "sender",
-    "chat_resync": "sender",
-    "chat_join": "name",
-    "chat_who": None,          # no sender param
-    "chat_decision": "sender",
-    "chat_channels": None,
-    "chat_set_hat": "sender",
-    "chat_claim": "sender",
-}
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -151,13 +137,10 @@ class McpIdentityProxy:
                 length = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(length) if length else b""
 
-                # Inject sender into MCP tool calls
-                body = self._maybe_inject_sender(raw)
-
                 try:
                     req = Request(
                         self._upstream_url(),
-                        data=body,
+                        data=raw,
                         method="POST",
                     )
                     # Forward all headers from client
@@ -265,43 +248,6 @@ class McpIdentityProxy:
                     return rewritten.encode("utf-8")
                 except Exception:
                     return line
-
-            def _maybe_inject_sender(self, raw: bytes) -> bytes:
-                """Parse JSON-RPC, inject sender for tools/call if missing."""
-                if not raw:
-                    return raw
-                try:
-                    data = json.loads(raw)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    return raw
-
-                # Handle both single requests and batches
-                messages = data if isinstance(data, list) else [data]
-                modified = False
-
-                for msg in messages:
-                    if not isinstance(msg, dict):
-                        continue
-                    if msg.get("method") != "tools/call":
-                        continue
-
-                    params = msg.get("params", {})
-                    tool_name = params.get("name", "")
-                    args = params.get("arguments", {})
-
-                    sender_key = _SENDER_PARAMS.get(tool_name)
-                    if sender_key is None:
-                        continue
-
-                    current = args.get(sender_key, "")
-                    if current != proxy.agent_name:
-                        args[sender_key] = proxy.agent_name
-                        params["arguments"] = args
-                        modified = True
-
-                if modified:
-                    return json.dumps(data).encode("utf-8")
-                return raw
 
         try:
             self._server = _ThreadingHTTPServer(("127.0.0.1", self._port), Handler)
