@@ -512,9 +512,11 @@ fn run_agent(opts: RunOpts) -> Result<()> {
     // Resolve config, honouring a per-project `.agentchattr` overlay.
     let inv = config::resolve_invocation(&opts.root, &opts.overrides, opts.agent_cwd.as_deref())?;
     let cfg = inv.config;
-    let install_root = inv.install_root;
+    // Strip the \\?\ extended-length prefix everywhere — agents (e.g. Claude's
+    // --mcp-config) and CreateProcessW choke on it.
+    let install_root = strip_unc(inv.install_root);
     let server_port = cfg.server.port;
-    let data_dir = cfg.data_dir_path(&install_root);
+    let data_dir = strip_unc(cfg.data_dir_path(&install_root));
     std::fs::create_dir_all(&data_dir)?;
     let agent_cfg = cfg.agents.get(&opts.agent).cloned().unwrap_or_default();
 
@@ -714,7 +716,8 @@ fn run_agent(opts: RunOpts) -> Result<()> {
             let reader = host.reader()?;
             let out_thread = std::thread::spawn({
                 let counter = Arc::clone(&counter);
-                move || pump_output(reader, counter)
+                let sw = Arc::clone(&shared_writer);
+                move || pump_output(reader, counter, sw)
             });
             let code = host.wait()?;
             *shared_writer.lock().unwrap() = None;
@@ -800,7 +803,11 @@ fn activity_loop(
     }
 }
 
-fn pump_output(mut reader: Box<dyn Read + Send>, counter: Arc<activity::ActivityCounter>) {
+fn pump_output(
+    mut reader: Box<dyn Read + Send>,
+    counter: Arc<activity::ActivityCounter>,
+    sw: Arc<Mutex<Option<pty::PtyWriter>>>,
+) {
     let mut stdout = std::io::stdout();
     let mut buf = [0u8; 8192];
     loop {
@@ -808,13 +815,44 @@ fn pump_output(mut reader: Box<dyn Read + Send>, counter: Arc<activity::Activity
             Ok(0) | Err(_) => break,
             Ok(n) => {
                 counter.add_bytes(n);
-                if stdout.write_all(&buf[..n]).is_err() {
+                // Answer cursor-position (DSR) queries ourselves so the agent's
+                // TUI doesn't stall waiting for the terminal, and strip the query
+                // so the outer terminal doesn't also reply.
+                let out = answer_dsr(&buf[..n], &sw);
+                if stdout.write_all(&out).is_err() {
                     break;
                 }
                 let _ = stdout.flush();
             }
         }
     }
+}
+
+/// If `chunk` contains a DSR cursor-position query (`ESC[6n`), reply `ESC[1;1R`
+/// to the PTY and return the chunk with the query removed; otherwise return the
+/// chunk unchanged.
+fn answer_dsr(chunk: &[u8], sw: &Arc<Mutex<Option<pty::PtyWriter>>>) -> Vec<u8> {
+    const Q: &[u8] = b"\x1b[6n";
+    if chunk.len() < 4 || !chunk.windows(4).any(|w| w == Q) {
+        return chunk.to_vec();
+    }
+    if let Some(w) = sw.lock().unwrap().as_ref().cloned() {
+        if let Ok(mut g) = w.lock() {
+            let _ = g.write_all(b"\x1b[1;1R");
+            let _ = g.flush();
+        }
+    }
+    let mut out = Vec::with_capacity(chunk.len());
+    let mut i = 0;
+    while i < chunk.len() {
+        if i + 4 <= chunk.len() && &chunk[i..i + 4] == Q {
+            i += 4;
+        } else {
+            out.push(chunk[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn pump_input(sw: Arc<Mutex<Option<pty::PtyWriter>>>) {
