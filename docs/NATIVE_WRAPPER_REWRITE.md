@@ -191,15 +191,20 @@ codex never needs to know its own identity. Two ways forward:
 - **Option A — port it to Rust.** Faithful: an HTTP+SSE proxy (e.g. `hyper`)
   with the same sender-stamping. Keeps the server untouched. Cost: it is the
   single heaviest component to port (streaming, SSE endpoint rewriting).
-- **Option B — eliminate it (recommended to evaluate).** The server already
+- **Option B — eliminate it (a later cleanup).** The server already
   authenticates each instance by bearer token, so it *could* derive `sender`
   from the token and ignore the client-supplied value. Then codex connects
   directly with its token like Claude does, and the proxy + `proxy_flag` mode
-  disappear from the wrapper entirely. Cost: a **server-side** change (Python) +
-  an audit that no flow relies on a client-spoofable `sender`.
+  disappear from the wrapper entirely. Cost / blockers: a **server-side** change
+  (Python, widening this rewrite's scope) + an audit that no flow relies on a
+  client-spoofable `sender` + **verifying codex can attach its own bearer token**
+  (if it cannot — likely the original reason the proxy exists — the proxy still
+  has a job and B does not fully remove it).
 
-This is an architectural-layer decision, not just A-vs-port — flagging it for an
-explicit call before M3.
+**Decision: A for v1**, B revisited as a standalone cleanup once codex's
+bearer-token support is verified. Rationale: B couples the wrapper rewrite to a
+server refactor plus an unverified codex capability; A keeps v1's scope clean and
+unblocked.
 
 ## 9. External invocation — how projects launch an agent
 
@@ -265,10 +270,14 @@ landed. Don't churn a working server mid-rewrite.
 - **M7 — Cut over.** delete the Python wrapper trio on this branch, update
   `templates/`, `windows/`, `macos-linux/`, README; merge to `main`.
 
-## 13. Open decisions (need an explicit call)
+## 13. Decisions
 
-1. **MCP proxy: port (A) or eliminate server-side (B)?** (§8.1) — blocks M3.
-2. **Server auto-start inside the binary?** (§9) — recommend yes.
-3. **Folder structure A or B?** (§10) — recommend A now.
-4. **Binary name** `agentchattr-wrapper`, or something shorter? (§6)
-5. **Detach** confirmed out of v1, seam only? (§6.4) — current assumption: yes.
+1. **MCP proxy** (§8.1) — **A (port) for v1**; B (server-side elimination) is a
+   later standalone cleanup, pending verification that codex can attach its own
+   bearer token.
+2. **Server auto-start inside the binary** (§9) — **yes** (matches current UX).
+3. **Folder structure** (§10) — **A**: add `wrapper/` alongside the flat root;
+   don't reorganise the working server now.
+4. **Binary name** (§6) — **`agentchattr-wrapper`**.
+5. **Detach** (§6.4) — **out of v1**; architecture leaves a `Frontend` seam to
+   add it later.
