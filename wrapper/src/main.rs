@@ -370,6 +370,54 @@ fn discover_root() -> PathBuf {
     cwd
 }
 
+/// Strip Windows' `\\?\` extended-length prefix — CreateProcessW rejects it as
+/// a working directory.
+fn strip_unc(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    }
+}
+
+struct Launch {
+    program: String,
+    prefix_args: Vec<String>,
+}
+
+/// Resolve a command to something CreateProcessW can spawn. npm/fnm shims on
+/// Windows are `.cmd`/`.ps1` scripts (not `.exe`); CreateProcessW can't run them
+/// directly, so wrap them in their interpreter. `.exe` and Unix binaries run as
+/// themselves. Mirrors what the Python wrapper got from `shutil.which`.
+fn resolve_launch(command: &str) -> Launch {
+    let resolved = which::which(command).unwrap_or_else(|_| PathBuf::from(command));
+    let ext = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    let full = resolved.to_string_lossy().into_owned();
+    match ext.as_deref() {
+        Some("cmd") | Some("bat") => Launch {
+            program: "cmd.exe".into(),
+            prefix_args: vec!["/c".into(), full],
+        },
+        Some("ps1") => Launch {
+            program: "powershell.exe".into(),
+            prefix_args: vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                full,
+            ],
+        },
+        _ => Launch {
+            program: full,
+            prefix_args: vec![],
+        },
+    }
+}
+
 /// Prefer the install's venv Python, else `python` on PATH.
 fn find_python(install_root: &Path) -> std::ffi::OsString {
     #[cfg(windows)]
@@ -407,7 +455,9 @@ fn start_server(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
+        // CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP — own window, and not in
+        // the agent's Ctrl+C group so quitting an agent never kills the server.
+        cmd.creation_flags(0x0000_0010 | 0x0000_0200);
     }
     cmd.spawn().context("starting agentchattr server")?;
     Ok(())
@@ -472,11 +522,11 @@ fn run_agent(opts: RunOpts) -> Result<()> {
     // config.cwd anchored at the install root, else the install root.
     let project_dir = if let Some(c) = &inv.agent_cwd {
         let p = PathBuf::from(c);
-        p.canonicalize().unwrap_or(p)
+        strip_unc(p.canonicalize().unwrap_or(p))
     } else {
         let cwd = agent_cfg.cwd.clone().unwrap_or_else(|| ".".to_string());
         let p = install_root.join(&cwd);
-        p.canonicalize().unwrap_or(p)
+        strip_unc(p.canonicalize().unwrap_or(p))
     };
 
     let client = server::ServerClient::new(server_port);
@@ -505,6 +555,21 @@ fn run_agent(opts: RunOpts) -> Result<()> {
     ));
     let is_multi = reg.slot > 1;
     let _ = std::fs::write(identity.queue_path(), "");
+
+    // Ctrl+C handling. While the agent is active the terminal is in raw mode, so
+    // Ctrl+C is delivered to the agent as a keystroke and never reaches here.
+    // Between runs / at the restart prompt the terminal is cooked, so Ctrl+C
+    // fires this handler: restore the terminal, deregister, and quit cleanly.
+    {
+        let client = client.clone();
+        let identity = Arc::clone(&identity);
+        let _ = ctrlc::set_handler(move || {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = client.deregister(&identity.name(), &identity.token());
+            println!("\r\n  Quit.");
+            std::process::exit(130);
+        });
+    }
 
     // Command + MCP injection (+ identity proxy for proxy_flag agents).
     let mut proxy: Option<Arc<mcp::proxy::McpProxy>> = None;
@@ -583,23 +648,43 @@ fn run_agent(opts: RunOpts) -> Result<()> {
         let get_identity = move || id_snap.snapshot();
         let get_token = move || id_tok.token();
         let inject = move |text: &str| {
-            if let Some(w) = sw.lock().unwrap().as_ref() {
-                if let Ok(mut g) = w.lock() {
+            // Clone the current writer handle so we don't hold the outer lock
+            // across the delay below.
+            let writer = { sw.lock().unwrap().as_ref().cloned() };
+            if let Some(w) = writer {
+                {
+                    let mut g = w.lock().unwrap();
                     let _ = g.write_all(text.as_bytes());
-                    let _ = g.write_all(b"\r");
                     let _ = g.flush();
                 }
+                // Let the TUI ingest the text before Enter — some Ink-based
+                // input layers (Claude Code) drop a glued-on Enter and leave the
+                // text sitting unsent in the box.
+                std::thread::sleep(Duration::from_millis(400));
+                let mut g = w.lock().unwrap();
+                let _ = g.write_all(b"\r");
+                let _ = g.flush();
             }
         };
         let on_trigger = move || counter.set_trigger();
         move || watcher::run(watcher, get_identity, get_token, inject, on_trigger)
     });
 
+    let launch = resolve_launch(&command);
     println!("  Starting {} in {}", command, project_dir.display());
+
+    // One persistent stdin pump → whichever PTY is current (survives restarts).
+    std::thread::spawn({
+        let sw = Arc::clone(&shared_writer);
+        move || pump_input(sw)
+    });
 
     // Run loop: spawn the agent in a PTY, pump I/O, restart unless --no-restart.
     loop {
-        let mut cmd = CommandBuilder::new(&command);
+        let mut cmd = CommandBuilder::new(&launch.program);
+        for a in &launch.prefix_args {
+            cmd.arg(a);
+        }
         for a in &launch_args {
             cmd.arg(a);
         }
@@ -620,20 +705,22 @@ fn run_agent(opts: RunOpts) -> Result<()> {
             pixel_height: 0,
         };
         let mut host = pty::PtyHost::spawn(cmd, size).context("spawning agent in PTY")?;
-        let _raw = pty::RawModeGuard::enable().ok(); // best-effort (no-op without a TTY)
-        *shared_writer.lock().unwrap() = Some(host.writer());
 
-        let reader = host.reader()?;
-        let out_thread = std::thread::spawn({
-            let counter = Arc::clone(&counter);
-            move || pump_output(reader, counter)
-        });
-        let in_writer = host.writer();
-        std::thread::spawn(move || pump_input(in_writer));
-
-        let code = host.wait()?;
-        *shared_writer.lock().unwrap() = None;
-        let _ = out_thread.join();
+        // Raw mode only while the agent is active; restored to cooked before the
+        // restart window so Ctrl+C there becomes a quit signal (the Ctrl+C fix).
+        let code = {
+            let _raw = pty::RawModeGuard::enable().ok();
+            *shared_writer.lock().unwrap() = Some(host.writer());
+            let reader = host.reader()?;
+            let out_thread = std::thread::spawn({
+                let counter = Arc::clone(&counter);
+                move || pump_output(reader, counter)
+            });
+            let code = host.wait()?;
+            *shared_writer.lock().unwrap() = None;
+            let _ = out_thread.join();
+            code
+        };
 
         if opts.no_restart {
             break;
@@ -730,20 +817,19 @@ fn pump_output(mut reader: Box<dyn Read + Send>, counter: Arc<activity::Activity
     }
 }
 
-fn pump_input(writer: pty::PtyWriter) {
+fn pump_input(sw: Arc<Mutex<Option<pty::PtyWriter>>>) {
     let mut stdin = std::io::stdin();
     let mut buf = [0u8; 1024];
     loop {
         match stdin.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                if let Ok(mut w) = writer.lock() {
-                    if w.write_all(&buf[..n]).is_err() {
-                        break;
+                let writer = { sw.lock().unwrap().as_ref().cloned() };
+                if let Some(w) = writer {
+                    if let Ok(mut g) = w.lock() {
+                        let _ = g.write_all(&buf[..n]);
+                        let _ = g.flush();
                     }
-                    let _ = w.flush();
-                } else {
-                    break;
                 }
             }
         }
