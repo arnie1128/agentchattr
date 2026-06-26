@@ -22,3 +22,7 @@ docs/
 goals.py
 pr-reviews/
 agentchattr-*.zip
+# Rust build artifacts (native wrapper crate)
+/wrapper/target/
+# CodeGraph index (local, per-user — indexing is the owner's choice)
+/.codegraph/
