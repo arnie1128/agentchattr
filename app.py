@@ -295,7 +295,13 @@ def configure(cfg: dict, session_token: str = ""):
         agent_names=agent_names,
         default_mention=cfg.get("routing", {}).get("default", "none"),
         max_hops=max_hops,
-        online_checker=lambda: set(registry.get_active_names()) if registry else set(),
+        # @all must only tag agents that are reachable = active (claimed
+        # identity) AND present (fresh MCP heartbeat). Gating on is_online —
+        # the same predicate the send path uses — keeps @all from tagging a
+        # claimed-but-offline agent that could never receive the message.
+        online_checker=lambda: {
+            n for n in registry.get_active_names() if mcp_bridge.is_online(n)
+        } if registry else set(),
     )
     agents = AgentTrigger(registry, data_dir=data_dir)
 

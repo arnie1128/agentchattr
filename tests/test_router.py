@@ -39,5 +39,31 @@ class RouterMentionTests(unittest.TestCase):
         self.assertEqual(router.get_targets("ben", "@telegram-bot check"), [])
 
 
+class RouterAllMentionTests(unittest.TestCase):
+    def test_all_without_checker_tags_every_agent(self):
+        router = Router(["claude", "codex"], default_mention="none")
+        self.assertEqual(
+            set(router.parse_mentions("@all please look")), {"claude", "codex"}
+        )
+
+    def test_all_filters_to_the_online_set(self):
+        # @all expands only to agents the online_checker reports — the
+        # mechanism BUG-2's fix relies on (app.py wires this to
+        # active AND present, not merely claimed).
+        online = {"claude"}
+        router = Router(
+            ["claude", "codex"], default_mention="none",
+            online_checker=lambda: online,
+        )
+        self.assertEqual(router.parse_mentions("@all status?"), ["claude"])
+
+    def test_all_empty_when_no_one_online(self):
+        router = Router(
+            ["claude", "codex"], default_mention="none",
+            online_checker=lambda: set(),
+        )
+        self.assertEqual(router.parse_mentions("@all anyone?"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
