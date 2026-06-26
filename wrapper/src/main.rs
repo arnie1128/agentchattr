@@ -458,9 +458,11 @@ fn node_shim_target(cmd_path: &Path) -> Option<String> {
     None
 }
 
-/// Enable VT input on stdin (so ESC / arrows / function keys arrive as byte
-/// sequences we can forward to the PTY, instead of being dropped as INPUT_RECORD
-/// events) and VT processing on stdout (so the agent's colours/cursor render).
+/// Enable VT input on stdin (so ALL input — normal keys, ESC, arrows, function
+/// keys, mouse/scroll — arrives as a VT byte stream we read via `ReadFile` and
+/// forward to the PTY) and VT processing on stdout (so the agent renders). We
+/// must NOT read this stream with Rust's `stdin()` (ReadConsoleW), which is
+/// char-based and incompatible with VT input — `pump_input` uses `ReadFile`.
 /// No-op off Windows.
 #[cfg(windows)]
 fn enable_vt_io() {
@@ -949,6 +951,68 @@ fn answer_dsr(chunk: &[u8], sw: &Arc<Mutex<Option<pty::PtyWriter>>>) -> Vec<u8> 
     out
 }
 
+/// Forward one chunk of terminal input to the current PTY. Two Ctrl+C (0x03)
+/// within 800ms force-quit the wrapper even if the agent is wedged; a single
+/// Ctrl+C is forwarded to the agent.
+fn forward_input(
+    chunk: &[u8],
+    sw: &Arc<Mutex<Option<pty::PtyWriter>>>,
+    client: &server::ServerClient,
+    identity: &Arc<identity::Identity>,
+    last_ctrl_c: &mut Instant,
+) {
+    if chunk.contains(&0x03) {
+        let now = Instant::now();
+        if now.duration_since(*last_ctrl_c) < Duration::from_millis(800) {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = client.deregister(&identity.name(), &identity.token());
+            println!("\r\n  Force quit.");
+            std::process::exit(130);
+        }
+        *last_ctrl_c = now;
+    }
+    let writer = { sw.lock().unwrap().as_ref().cloned() };
+    if let Some(w) = writer {
+        if let Ok(mut g) = w.lock() {
+            let _ = g.write_all(chunk);
+            let _ = g.flush();
+        }
+    }
+}
+
+/// Windows: read the raw VT input byte stream via `ReadFile` (VT input mode is
+/// enabled in `enable_vt_io`). Rust's `stdin()` can't be used here — it reads
+/// chars via ReadConsoleW, which drops VT/special-key/mouse sequences.
+#[cfg(windows)]
+fn pump_input(
+    sw: Arc<Mutex<Option<pty::PtyWriter>>>,
+    client: server::ServerClient,
+    identity: Arc<identity::Identity>,
+) {
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE};
+    let h = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    let mut buf = [0u8; 1024];
+    let mut last_ctrl_c = Instant::now() - Duration::from_secs(10);
+    loop {
+        let mut n: u32 = 0;
+        let ok = unsafe {
+            ReadFile(
+                h,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                &mut n,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 || n == 0 {
+            break;
+        }
+        forward_input(&buf[..n as usize], &sw, &client, &identity, &mut last_ctrl_c);
+    }
+}
+
+#[cfg(not(windows))]
 fn pump_input(
     sw: Arc<Mutex<Option<pty::PtyWriter>>>,
     client: server::ServerClient,
@@ -956,32 +1020,11 @@ fn pump_input(
 ) {
     let mut stdin = std::io::stdin();
     let mut buf = [0u8; 1024];
-    // Force-quit escape hatch: two Ctrl+C within 800ms quits the wrapper even if
-    // the agent is wedged (e.g. hung in its own exit hook). A single Ctrl+C is
-    // still forwarded to the agent.
     let mut last_ctrl_c = Instant::now() - Duration::from_secs(10);
     loop {
         match stdin.read(&mut buf) {
             Ok(0) | Err(_) => break,
-            Ok(n) => {
-                if buf[..n].contains(&0x03) {
-                    let now = Instant::now();
-                    if now.duration_since(last_ctrl_c) < Duration::from_millis(800) {
-                        let _ = crossterm::terminal::disable_raw_mode();
-                        let _ = client.deregister(&identity.name(), &identity.token());
-                        println!("\r\n  Force quit.");
-                        std::process::exit(130);
-                    }
-                    last_ctrl_c = now;
-                }
-                let writer = { sw.lock().unwrap().as_ref().cloned() };
-                if let Some(w) = writer {
-                    if let Ok(mut g) = w.lock() {
-                        let _ = g.write_all(&buf[..n]);
-                        let _ = g.flush();
-                    }
-                }
-            }
+            Ok(n) => forward_input(&buf[..n], &sw, &client, &identity, &mut last_ctrl_c),
         }
     }
 }
