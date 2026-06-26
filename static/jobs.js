@@ -481,11 +481,7 @@ function _shouldSuppressJobUpdateRender(data) {
 }
 
 async function _persistJobOrder(status, orderedIds) {
-    const resp = await fetch('/api/jobs/reorder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-        body: JSON.stringify({ status, ordered_ids: orderedIds }),
-    });
+    const resp = await api.post('/api/jobs/reorder', { status, ordered_ids: orderedIds });
     if (!resp.ok) {
         throw new Error(`Failed to persist order: ${resp.status}`);
     }
@@ -511,9 +507,7 @@ async function reorderJobWithinGroup(status, draggedId, targetId, insertAfter) {
         console.error(err);
         // Reload canonical state from server on failure.
         try {
-            const resp = await fetch('/api/jobs', {
-                headers: { 'X-Session-Token': window.SESSION_TOKEN },
-            });
+            const resp = await api.get('/api/jobs');
             if (resp.ok) {
                 jobsData = await resp.json();
                 syncJobUnreadCache();
@@ -653,11 +647,7 @@ function renderJobsList() {
             if (!draggedId || _draggedJobStatus === group.key) return;
             const oldStatus = _draggedJobStatus;
             try {
-                await fetch(`/api/jobs/${draggedId}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-                    body: JSON.stringify({ status: group.key }),
-                });
+                await api.patch(`/api/jobs/${draggedId}`, { status: group.key });
                 const act = jobsData.find(a => String(a.id) === String(draggedId));
                 _beginJobReorderMute({ ids: [draggedId], channel: window.activeChannel, status: group.key });
                 if (act) act.status = group.key;
@@ -948,9 +938,7 @@ async function loadJobMessages(jobId) {
     container.innerHTML = '';
 
     try {
-        const resp = await fetch(`/api/jobs/${jobId}/messages`, {
-            headers: { 'X-Session-Token': window.SESSION_TOKEN }
-        });
+        const resp = await api.get(`/api/jobs/${jobId}/messages`);
         if (!resp.ok) return [];
         const msgs = await resp.json();
         const visibleMsgs = msgs.filter(msg => !msg?.deleted);
@@ -1053,10 +1041,7 @@ async function confirmDeleteJobMessage(jobId, msgId, event) {
     event?.stopPropagation?.();
     _clearJobMsgDeleteTimer(jobId, msgId);
     try {
-        const resp = await fetch(`/api/jobs/${jobId}/messages/${msgId}`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        const resp = await api.del(`/api/jobs/${jobId}/messages/${msgId}`);
         if (!resp.ok) {
             cancelDeleteJobMessage(jobId, msgId);
             return;
@@ -1155,16 +1140,12 @@ async function sendJobMessage() {
     }
 
     try {
-        const resp = await fetch(`/api/jobs/${activeJobId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                text: outboundText,
-                sender: window.username,
-                attachments: jobPendingAttachments.map(a => ({
-                    path: a.path, name: a.name, url: a.url,
-                })),
-            }),
+        const resp = await api.post(`/api/jobs/${activeJobId}/messages`, {
+            text: outboundText,
+            sender: window.username,
+            attachments: jobPendingAttachments.map(a => ({
+                path: a.path, name: a.name, url: a.url,
+            })),
         });
         if (resp.ok) {
             input.value = '';
@@ -1181,7 +1162,7 @@ async function uploadJobImage(file) {
     const form = new FormData();
     form.append('file', file);
     try {
-        const resp = await fetch('/api/upload', { method: 'POST', headers: { 'X-Session-Token': window.SESSION_TOKEN }, body: form });
+        const resp = await api.postForm('/api/upload', form);
         const data = await resp.json();
         jobPendingAttachments.push({ path: data.path, name: data.name, url: data.url });
         renderJobAttachments();
@@ -1233,11 +1214,7 @@ function startEditJobTitle(job, titleEl) {
         const newTitle = input.value.trim();
         if (newTitle && newTitle !== job.title) {
             try {
-                await fetch(`/api/jobs/${job.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-                    body: JSON.stringify({ title: newTitle }),
-                });
+                await api.patch(`/api/jobs/${job.id}`, { title: newTitle });
                 job.title = newTitle;
             } catch (e) { console.error('Failed to update title:', e); }
         }
@@ -1260,11 +1237,7 @@ async function toggleJobStatus(status) {
     const statusLabels = { 'open': 'TO DO', 'done': 'ACTIVE', 'archived': 'CLOSED' };
 
     try {
-        await fetch(`/api/jobs/${activeJobId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ status }),
-        });
+        await api.patch(`/api/jobs/${activeJobId}`, { status });
         // Update local data
         job.status = status;
         if (status === 'archived') {
@@ -1337,17 +1310,13 @@ async function submitCreateJob(btn) {
     const jobBody = bodyInput ? bodyInput.value.trim() : '';
 
     try {
-        await fetch('/api/jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                title,
-                body: jobBody,
-                type: 'job',
-                channel: window.activeChannel,
-                created_by: window.username,
-                assignee: window._lastMentionedAgent || '',
-            }),
+        await api.post('/api/jobs', {
+            title,
+            body: jobBody,
+            type: 'job',
+            channel: window.activeChannel,
+            created_by: window.username,
+            assignee: window._lastMentionedAgent || '',
         });
         form.remove();
     } catch (e) {
@@ -1580,15 +1549,11 @@ async function _doConvertToJob() {
     const instruction = `${window.username}: Please read the following message and use chat_propose_job to propose it as a job. Write a concise title (max 80 chars) and a clear body (max 500 chars) summarizing the task:\n\n---\n${rawText.substring(0, 800)}\n---`;
 
     try {
-        await fetch('/api/trigger-agent', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                agent,
-                message: instruction,
-                channel: window.activeChannel,
-                source_msg_id: sourceMsgId,
-            }),
+        await api.post('/api/trigger-agent', {
+            agent,
+            message: instruction,
+            channel: window.activeChannel,
+            source_msg_id: sourceMsgId,
         });
     } catch (e) {
         console.error('Failed to trigger agent for job conversion:', e);
@@ -1670,17 +1635,13 @@ async function acceptProposal(msgId) {
     if (!title) return;
 
     try {
-        const resp = await fetch('/api/jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                title,
-                body: body || '',
-                type: 'job',
-                channel: window.activeChannel,
-                created_by: proposalSender,
-                anchor_msg_id: msgId,
-            }),
+        const resp = await api.post('/api/jobs', {
+            title,
+            body: body || '',
+            type: 'job',
+            channel: window.activeChannel,
+            created_by: proposalSender,
+            anchor_msg_id: msgId,
         });
         const job = await resp.json();
         if (job && job.id) {
@@ -1712,10 +1673,7 @@ async function acceptProposal(msgId) {
 async function dismissProposal(msgId) {
     // Demote on server — converts proposal to regular chat message
     try {
-        await fetch(`/api/messages/${msgId}/demote`, {
-            method: 'POST',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        await api.post(`/api/messages/${msgId}/demote`);
     } catch (e) {
         console.error('Failed to demote proposal:', e);
     }
@@ -1724,10 +1682,7 @@ async function dismissProposal(msgId) {
 async function requestChangesProposal(msgId) {
     // Demote proposal to chat message, then open a reply to it
     try {
-        await fetch(`/api/messages/${msgId}/demote`, {
-            method: 'POST',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        await api.post(`/api/messages/${msgId}/demote`);
         // Wait briefly for WS edit event to re-render the message as chat
         setTimeout(() => window.startReply(msgId), 200);
     } catch (e) {
@@ -1763,11 +1718,7 @@ async function openJobFromBreadcrumb(jobId) {
 
 async function acceptSuggestion(jobId, msgIndex) {
     try {
-        await fetch(`/api/jobs/${jobId}/messages/${msgIndex}/resolve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ resolution: 'accepted' }),
-        });
+        await api.post(`/api/jobs/${jobId}/messages/${msgIndex}/resolve`, { resolution: 'accepted' });
         // Reload conversation to reflect change
         await loadJobMessages(jobId);
     } catch (e) {
@@ -1777,11 +1728,7 @@ async function acceptSuggestion(jobId, msgIndex) {
 
 async function dismissSuggestion(jobId, msgIndex) {
     try {
-        await fetch(`/api/jobs/${jobId}/messages/${msgIndex}/resolve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ resolution: 'dismissed' }),
-        });
+        await api.post(`/api/jobs/${jobId}/messages/${msgIndex}/resolve`, { resolution: 'dismissed' });
         await loadJobMessages(jobId);
     } catch (e) {
         console.error('Failed to dismiss suggestion:', e);
@@ -1801,10 +1748,7 @@ async function confirmDeleteJobPermanent() {
     if (!jobId) return;
     closeDeleteJobModal();
     try {
-        await fetch(`/api/jobs/${jobId}?permanent=true`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        await api.del(`/api/jobs/${jobId}?permanent=true`);
         jobsData = jobsData.filter(a => a.id !== jobId);
         renderJobsList();
     } catch (e) {
@@ -1884,10 +1828,7 @@ async function deleteArchiveIds(ids, trashZone) {
     const deletedIds = [];
     for (const id of normalizedIds) {
         try {
-            const resp = await fetch(`/api/jobs/${id}?permanent=true`, {
-                method: 'DELETE',
-                headers: { 'X-Session-Token': window.SESSION_TOKEN },
-            });
+            const resp = await api.del(`/api/jobs/${id}?permanent=true`);
             if (resp.ok) deletedIds.push(id);
         } catch (err) { console.error('Failed to delete job:', err); }
     }

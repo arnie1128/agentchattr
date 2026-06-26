@@ -203,7 +203,7 @@ function _showSidebarRenameDialog(oldName) {
         const newName = input.value.trim().toLowerCase();
         if (!newName || !/^[a-z0-9][a-z0-9\-]{0,19}$/.test(newName)) return;
         if (newName !== oldName) {
-            window.ws.send(JSON.stringify({ type: 'channel_rename', old_name: oldName, new_name: newName }));
+            wsClient.send('channel_rename', { old_name: oldName, new_name: newName });
             if (window.activeChannel === oldName) {
                 window._setActiveChannel(newName);
                 localStorage.setItem('agentchattr-channel', newName);
@@ -276,7 +276,7 @@ function _sidebarConfirmDelete(name, row, label) {
     tickBtn.onclick = (e) => {
         e.stopPropagation();
         revert();
-        window.ws.send(JSON.stringify({ type: 'channel_delete', name }));
+        wsClient.send('channel_delete', { name });
         if (window.activeChannel === name) switchChannel('general');
     };
     crossBtn.onclick = (e) => { e.stopPropagation(); revert(); };
@@ -388,7 +388,7 @@ function _submitInlineCreate(input, wrapper) {
     if (!name || !/^[a-z0-9][a-z0-9\-]{0,19}$/.test(name)) return;
     if (window.channelList.includes(name)) { input.focus(); return; }
     window._setPendingChannelSwitch(name);
-    window.ws.send(JSON.stringify({ type: 'channel_create', name }));
+    wsClient.send('channel_create', { name });
     wrapper.remove();
 }
 
@@ -430,7 +430,7 @@ function showChannelRenameDialog(oldName) {
         const newName = input.value.trim().toLowerCase();
         if (!newName || !/^[a-z0-9][a-z0-9\-]{0,19}$/.test(newName)) return;
         if (newName !== oldName) {
-            window.ws.send(JSON.stringify({ type: 'channel_rename', old_name: oldName, new_name: newName }));
+            wsClient.send('channel_rename', { old_name: oldName, new_name: newName });
             if (window.activeChannel === oldName) {
                 window._setActiveChannel(newName);
                 localStorage.setItem('agentchattr-channel', newName);
@@ -514,7 +514,7 @@ function deleteChannel(name) {
     tickBtn.onclick = (e) => {
         e.stopPropagation();
         revert();
-        window.ws.send(JSON.stringify({ type: 'channel_delete', name }));
+        wsClient.send('channel_delete', { name });
         if (window.activeChannel === name) switchChannel('general');
     };
 

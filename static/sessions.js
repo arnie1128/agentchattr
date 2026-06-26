@@ -148,7 +148,7 @@ window._messageRenderers['session_draft'] = function (el, msg) {
 
 async function fetchSessionTemplates() {
     try {
-        const res = await fetch('/api/sessions/templates', { headers: { 'X-Session-Token': window.SESSION_TOKEN } });
+        const res = await api.get('/api/sessions/templates');
         if (res.ok) sessionTemplates = await res.json();
     } catch (e) {
         console.warn('Failed to fetch session templates', e);
@@ -157,7 +157,7 @@ async function fetchSessionTemplates() {
 
 async function fetchAllActiveSessions() {
     try {
-        const res = await fetch('/api/sessions/active-all', { headers: { 'X-Session-Token': window.SESSION_TOKEN } });
+        const res = await api.get('/api/sessions/active-all');
         if (res.ok) {
             const sessions = await res.json();
             activeSessionsByChannel = {};
@@ -176,7 +176,7 @@ async function fetchAllActiveSessions() {
 async function fetchActiveSession(channelName) {
     if (channelName === undefined) channelName = window.activeChannel;
     try {
-        const res = await fetch(`/api/sessions/active?channel=${encodeURIComponent(channelName)}`, { headers: { 'X-Session-Token': window.SESSION_TOKEN } });
+        const res = await api.get(`/api/sessions/active?channel=${encodeURIComponent(channelName)}`);
         if (res.ok) {
             const data = await res.json();
             if (data) activeSessionsByChannel[channelName] = data;
@@ -436,11 +436,7 @@ async function sendDesignRequest() {
     const modal = document.getElementById('session-launcher-modal');
     if (modal) modal.remove();
     try {
-        const res = await fetch('/api/sessions/request-draft', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ agent: agent, description: desc, channel: window.activeChannel, sender: window.username }),
-        });
+        const res = await api.post('/api/sessions/request-draft', { agent: agent, description: desc, channel: window.activeChannel, sender: window.username });
         if (!res.ok) alert('Failed to send design request (HTTP ' + res.status + ')');
     } catch (e) {
         alert('Error: ' + e.message);
@@ -497,16 +493,12 @@ async function launchSessionWithCast(templateId) {
     if (modal) modal.remove();
 
     try {
-        const res = await fetch('/api/sessions/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                template_id: templateId,
-                channel: window.activeChannel,
-                cast: cast,
-                goal: goal,
-                started_by: window.username,
-            }),
+        const res = await api.post('/api/sessions/start', {
+            template_id: templateId,
+            channel: window.activeChannel,
+            cast: cast,
+            goal: goal,
+            started_by: window.username,
         });
         if (!res.ok) {
             const data = await res.json();
@@ -571,10 +563,7 @@ async function endActiveSession() {
     if (!activeSession) return;
 
     try {
-        const res = await fetch(`/api/sessions/${activeSession.id}/end`, {
-            method: 'POST',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        const res = await api.post(`/api/sessions/${activeSession.id}/end`);
         if (!res.ok) {
             const data = await res.json();
             alert(data.error || 'Failed to end session');
@@ -672,16 +661,12 @@ async function launchDraftSession(draftMsgId) {
     if (modal) modal.remove();
 
     try {
-        const res = await fetch('/api/sessions/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({
-                draft_message_id: draftMsgId,
-                channel: window.activeChannel,
-                cast: cast,
-                goal: goal,
-                started_by: window.username,
-            }),
+        const res = await api.post('/api/sessions/start', {
+            draft_message_id: draftMsgId,
+            channel: window.activeChannel,
+            cast: cast,
+            goal: goal,
+            started_by: window.username,
         });
         if (!res.ok) {
             const data = await res.json();
@@ -694,11 +679,7 @@ async function launchDraftSession(draftMsgId) {
 
 async function saveDraft(msgId, btn) {
     try {
-        const res = await fetch('/api/sessions/save-draft', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ message_id: msgId }),
-        });
+        const res = await api.post('/api/sessions/save-draft', { message_id: msgId });
         if (res.ok) {
             if (btn) {
                 btn.textContent = 'Saved';
@@ -760,10 +741,7 @@ function toggleDeleteSessionTemplateConfirm(btn, templateId, event) {
 
 async function deleteSessionTemplate(templateId) {
     try {
-        const res = await fetch(`/api/sessions/templates/${encodeURIComponent(templateId)}`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        const res = await api.del(`/api/sessions/templates/${encodeURIComponent(templateId)}`);
         if (res.ok) {
             await fetchSessionTemplates();
             showSessionLauncher();
@@ -826,12 +804,11 @@ function submitDraftChanges(draftId, proposedBy, msgId) {
     const tmplJson = el.dataset.draftTemplate || '';
     const text = `@${proposedBy} Please revise session draft [${draftId}]: ${feedback}\n\nCurrent draft:\n\`\`\`session\n${tmplJson}\n\`\`\``;
     if (window.ws && window.ws.readyState === WebSocket.OPEN) {
-        window.ws.send(JSON.stringify({
-            type: 'message',
+        wsClient.send('message', {
             text: text,
             sender: window.username,
             channel: window.activeChannel,
-        }));
+        });
     } else {
         alert('Connection lost. Reconnect and try again.');
         return;
@@ -840,10 +817,7 @@ function submitDraftChanges(draftId, proposedBy, msgId) {
 }
 
 function dismissDraft(msgId) {
-    fetch(`/api/messages/${msgId}/demote`, {
-        method: 'POST',
-        headers: { 'X-Session-Token': window.SESSION_TOKEN },
-    }).then((res) => {
+    api.post(`/api/messages/${msgId}/demote`).then((res) => {
         if (!res.ok) alert('Failed to dismiss session proposal (HTTP ' + res.status + ')');
     }).catch((e) => {
         console.error('Failed to demote session draft:', e);

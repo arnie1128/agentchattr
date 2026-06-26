@@ -127,7 +127,7 @@ function toggleRulesPanel() {
 function remindAgents() {
     const btn = document.querySelector('.rules-remind-btn');
     if (btn) btn.disabled = true;
-    fetch('/api/rules/remind', { method: 'POST', headers: { 'X-Session-Token': window.SESSION_TOKEN } })
+    api.post('/api/rules/remind')
         .then(r => r.json())
         .then(() => {
             if (btn) {
@@ -258,11 +258,11 @@ function renderRulesPanel() {
             const currentStatus = normalize(d.status);
             if (currentStatus === group.key) return;
             if (group.key === 'active') {
-                window.ws.send(JSON.stringify({ type: 'rule_activate', id }));
+                wsClient.send('rule_activate', { id });
             } else if (group.key === 'draft') {
-                window.ws.send(JSON.stringify({ type: 'rule_make_draft', id }));
+                wsClient.send('rule_make_draft', { id });
             } else {
-                window.ws.send(JSON.stringify({ type: 'rule_deactivate', id }));
+                wsClient.send('rule_deactivate', { id });
             }
         });
 
@@ -317,7 +317,7 @@ function renderRulesPanel() {
                 const d = rules.find(r => r.id === id);
                 if (!d) return;
                 trashZone.classList.add('chomping');
-                window.ws.send(JSON.stringify({ type: 'rule_delete', id }));
+                wsClient.send('rule_delete', { id });
                 setTimeout(() => trashZone.classList.remove('chomping'), 500);
             });
 
@@ -404,12 +404,11 @@ function submitCreateRule(btn) {
     const text = (textInput.value || '').trim();
     if (!text) { textInput.focus(); return; }
 
-    window.ws.send(JSON.stringify({
-        type: 'rule_propose',
+    wsClient.send('rule_propose', {
         text: text,
         author: window.username,
         channel: window.activeChannel,
-    }));
+    });
     form.remove();
 }
 
@@ -419,9 +418,9 @@ function toggleRuleStatus(id) {
     if (!d) return;
 
     if (d.status === 'active' || d.status === 'approved') {
-        window.ws.send(JSON.stringify({ type: 'rule_deactivate', id }));
+        wsClient.send('rule_deactivate', { id });
     } else {
-        window.ws.send(JSON.stringify({ type: 'rule_activate', id }));
+        wsClient.send('rule_activate', { id });
     }
 }
 
@@ -478,11 +477,10 @@ function saveRuleEdit(id) {
 
     if (!newText) return;
 
-    window.ws.send(JSON.stringify({
-        type: 'rule_edit',
+    wsClient.send('rule_edit', {
         id,
         text: newText,
-    }));
+    });
 }
 
 function cancelRuleEdit(id) {
@@ -510,7 +508,7 @@ function startDeleteRule(id) {
 function deleteRule(id) {
     const rules = window.rules;
     const d = rules.find(r => r.id === id);
-    window.ws.send(JSON.stringify({ type: 'rule_delete', id }));
+    wsClient.send('rule_delete', { id });
 
     // Prefill a rejection message to the proposer
     const author = d?.author || d?.owner;
@@ -534,11 +532,7 @@ function cancelDeleteRule(id) {
 
 async function resolveRuleProposal(msgId, action) {
     try {
-        await fetch(`/api/messages/${msgId}/resolve_rule_proposal`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.SESSION_TOKEN },
-            body: JSON.stringify({ action }),
-        });
+        await api.post(`/api/messages/${msgId}/resolve_rule_proposal`, { action });
     } catch (e) {
         console.error('Failed to resolve rule proposal:', e);
     }
@@ -547,10 +541,7 @@ async function resolveRuleProposal(msgId, action) {
 async function dismissRuleProposal(msgId) {
     // Demote to regular chat message — same as job proposal dismiss
     try {
-        await fetch(`/api/messages/${msgId}/demote_rule_proposal`, {
-            method: 'POST',
-            headers: { 'X-Session-Token': window.SESSION_TOKEN },
-        });
+        await api.post(`/api/messages/${msgId}/demote_rule_proposal`);
     } catch (e) {
         console.error('Failed to dismiss rule proposal:', e);
     }

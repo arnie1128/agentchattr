@@ -193,9 +193,7 @@ function getAvatarSvg(sender) {
 
 async function checkForUpdate() {
     try {
-        const resp = await fetch('/api/version_check', {
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-        });
+        const resp = await api.get('/api/version_check');
         if (!resp.ok) return;
         const data = await resp.json();
         const pill = document.getElementById('update-pill');
@@ -307,7 +305,7 @@ function linkifyUrls(html) {
 let serverPlatform = 'win32';  // default, updated on connect
 async function detectPlatform() {
     try {
-        const r = await fetch('/api/platform', { headers: { 'X-Session-Token': SESSION_TOKEN } });
+        const r = await api.get('/api/platform');
         const data = await r.json();
         serverPlatform = data.platform || 'win32';
     } catch (e) { /* fallback to win32 */ }
@@ -331,11 +329,7 @@ function linkifyPaths(html) {
 
 async function openPath(path) {
     try {
-        await fetch('/api/open-path', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
-            body: JSON.stringify({ path: path }),
-        });
+        await api.post('/api/open-path', { path: path });
     } catch (err) {
         console.error('Failed to open path:', err);
     }
@@ -1083,10 +1077,7 @@ document.addEventListener('mouseup', (e) => {
         trashEl.classList.add('chomping');
 
         // Send DELETE to server
-        fetch(`/api/hat/${agent}`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-        }).catch(err => console.error('Hat delete failed:', err));
+        api.del(`/api/hat/${agent}`).catch(err => console.error('Hat delete failed:', err));
 
         // Cleanup after animation
         setTimeout(() => {
@@ -1258,9 +1249,9 @@ function showAgentNameModal(opts) {
         if (!label) return;
         if (ws && ws.readyState === WebSocket.OPEN) {
             if (opts.mode === 'pending') {
-                ws.send(JSON.stringify({ type: 'name_pending', name: opts.name, label }));
+                wsClient.send('name_pending', { name: opts.name, label });
             } else {
-                ws.send(JSON.stringify({ type: 'rename_agent', name: opts.name, label }));
+                wsClient.send('rename_agent', { name: opts.name, label });
             }
         }
         _closeAgentNameModal();
@@ -1377,9 +1368,9 @@ function showPillPopover(pillEl, opts) {
         if (!label) return;
         if (ws && ws.readyState === WebSocket.OPEN) {
             if (opts.mode === 'pending') {
-                ws.send(JSON.stringify({ type: 'name_pending', name: opts.name, label }));
+                wsClient.send('name_pending', { name: opts.name, label });
             } else {
-                ws.send(JSON.stringify({ type: 'rename_agent', name: opts.name, label }));
+                wsClient.send('rename_agent', { name: opts.name, label });
             }
         }
         closePopover();
@@ -1627,11 +1618,7 @@ function _syncBubbleRolePills(agentName) {
 }
 
 function _setRole(agentName, role) {
-    fetch(`/api/roles/${agentName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
-        body: JSON.stringify({ role }),
-    });
+    api.post(`/api/roles/${agentName}`, { role });
     // Optimistic update
     _agentRoles[agentName] = role;
     _syncBubbleRolePills(agentName);
@@ -1648,7 +1635,7 @@ function _addCustomRole(role) {
     const updated = [...list, role.trim()].slice(-20);
     window.customRoles = updated;
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'update_settings', data: { custom_roles: updated } }));
+        wsClient.send('update_settings', { data: { custom_roles: updated } });
     }
 }
 
@@ -1657,7 +1644,7 @@ function _deleteCustomRole(role) {
     const updated = (window.customRoles || []).filter(r => r.toLowerCase() !== lower);
     window.customRoles = updated;
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'update_settings', data: { custom_roles: updated } }));
+        wsClient.send('update_settings', { data: { custom_roles: updated } });
     }
     // Unassign from any agents currently using this role
     for (const [agentName, agentRole] of Object.entries(_agentRoles)) {
@@ -1672,7 +1659,7 @@ function _deleteCustomRole(role) {
 const _agentRoles = {};  // name → role string
 
 function fetchRoles() {
-    fetch('/api/roles').then(r => r.json()).then(roles => {
+    api.get('/api/roles').then(r => r.json()).then(roles => {
         Object.assign(_agentRoles, roles);
         for (const name of Object.keys(roles || {})) {
             _syncBubbleRolePills(name);
@@ -1833,7 +1820,7 @@ function clearChat() {
     // End Session pattern elsewhere.
     if (btn.classList.contains('confirming')) {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'message', text: '/clear', sender: username, channel: activeChannel }));
+            wsClient.send('message', { text: '/clear', sender: username, channel: activeChannel });
         }
         _clearClearChatConfirm();
         document.getElementById('settings-bar').classList.add('hidden');
@@ -1859,7 +1846,7 @@ function clearChat() {
     confirmWrap.querySelector('.ch-confirm-yes').onclick = (e) => {
         e.stopPropagation();
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'message', text: '/clear', sender: username, channel: activeChannel }));
+            wsClient.send('message', { text: '/clear', sender: username, channel: activeChannel });
         }
         _clearClearChatConfirm();
         document.getElementById('settings-bar').classList.add('hidden');
@@ -1888,8 +1875,7 @@ function saveSettings() {
     const newChatScale = chatScaleEl ? parseFloat(chatScaleEl.value) : 1.5;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            type: 'update_settings',
+        wsClient.send('update_settings', {
             data: {
                 username: newUsername || 'user',
                 font: newFont,
@@ -1901,7 +1887,7 @@ function saveSettings() {
                 chat_scale: newChatScale,
                 rules_refresh_interval: parseInt(newRulesRefresh) || 0,
             }
-        }));
+        });
     }
 }
 
@@ -1968,9 +1954,7 @@ function showToast(message, type = 'info') {
 
 async function exportHistory() {
     try {
-        const resp = await fetch('/api/export', {
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-        });
+        const resp = await api.get('/api/export');
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
             showToast(err.error || 'Export failed', 'error');
@@ -2004,11 +1988,7 @@ async function importHistory(input) {
     try {
         const formData = new FormData();
         formData.append('file', file);
-        const resp = await fetch('/api/import', {
-            method: 'POST',
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-            body: formData,
-        });
+        const resp = await api.postForm('/api/import', formData);
         const data = await resp.json();
         if (!resp.ok || !data.ok) {
             showToast(data.error || 'Import failed', 'error');
@@ -2400,7 +2380,7 @@ function sendMessage() {
     }
 
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(payload));
+        wsClient.sendObj(payload);
     }
 
     input.value = '';
@@ -2482,7 +2462,7 @@ async function uploadImage(file) {
     form.append('file', file);
 
     try {
-        const resp = await fetch('/api/upload', { method: 'POST', headers: { 'X-Session-Token': SESSION_TOKEN }, body: form });
+        const resp = await api.postForm('/api/upload', form);
         const data = await resp.json();
 
         pendingAttachments.push({
@@ -2656,28 +2636,28 @@ function todoCycle(msgId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const status = todos[msgId] || null;
     if (!status) {
-        ws.send(JSON.stringify({ type: 'todo_add', id: msgId }));
+        wsClient.send('todo_add', { id: msgId });
     } else if (status === 'todo') {
-        ws.send(JSON.stringify({ type: 'todo_toggle', id: msgId }));
+        wsClient.send('todo_toggle', { id: msgId });
     } else {
         // done → remove
-        ws.send(JSON.stringify({ type: 'todo_remove', id: msgId }));
+        wsClient.send('todo_remove', { id: msgId });
     }
 }
 
 function todoAdd(msgId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'todo_add', id: msgId }));
+    wsClient.send('todo_add', { id: msgId });
 }
 
 function todoToggle(msgId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'todo_toggle', id: msgId }));
+    wsClient.send('todo_toggle', { id: msgId });
 }
 
 function todoRemove(msgId) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'todo_remove', id: msgId }));
+    wsClient.send('todo_remove', { id: msgId });
 }
 
 function updateTodoState(msgId, status) {
@@ -2821,7 +2801,7 @@ function updateDeleteBar() {
 
 function confirmDelete() {
     if (!ws || deleteSelected.size === 0) return;
-    ws.send(JSON.stringify({ type: 'delete', ids: [...deleteSelected] }));
+    wsClient.send('delete', { ids: [...deleteSelected] });
     exitDeleteMode();
 }
 
@@ -3409,10 +3389,7 @@ function toggleSchedulesExpand() {
 
 async function toggleSchedule(id) {
     try {
-        await fetch(`/api/schedules/${id}/toggle`, {
-            method: 'PATCH',
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-        });
+        await api.patch(`/api/schedules/${id}/toggle`);
     } catch (e) {
         console.error('Failed to toggle schedule:', e);
     }
@@ -3420,10 +3397,7 @@ async function toggleSchedule(id) {
 
 async function deleteSchedule(id) {
     try {
-        await fetch(`/api/schedules/${id}`, {
-            method: 'DELETE',
-            headers: { 'X-Session-Token': SESSION_TOKEN },
-        });
+        await api.del(`/api/schedules/${id}`);
     } catch (e) {
         console.error('Failed to delete schedule:', e);
     }
@@ -3618,14 +3592,7 @@ async function submitSchedulePopover() {
         if (!recurring) body.one_shot = true;
         if (!recurring && dateVal) body.send_at_date = dateVal;
 
-        const resp = await fetch('/api/schedules', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Session-Token': SESSION_TOKEN,
-            },
-            body: JSON.stringify(body),
-        });
+        const resp = await api.post('/api/schedules', body);
         if (resp.ok) {
             input.value = '';
             input.style.height = 'auto';
@@ -3663,11 +3630,7 @@ async function resolveDecision(msgId, choice) {
     const buttons = msgEl ? msgEl.querySelectorAll('.decision-choice') : [];
     buttons.forEach(btn => { btn.style.opacity = '0.4'; btn.style.pointerEvents = 'none'; });
     try {
-        const res = await fetch(`/api/messages/${msgId}/resolve_decision`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-Token': SESSION_TOKEN },
-            body: JSON.stringify({ choice }),
-        });
+        const res = await api.post(`/api/messages/${msgId}/resolve_decision`, { choice });
         if (!res.ok) {
             const err = await res.json();
             console.error('Failed to resolve decision:', err);
