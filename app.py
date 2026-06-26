@@ -865,142 +865,58 @@ async def _broadcast(raw_json: str):
 
 
 async def broadcast(msg: dict):
-    data = json.dumps({"type": "message", "data": msg})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "message", "data": msg}))
 
 
 async def broadcast_status():
     status = agents.get_status()
     status["paused"] = any(router.is_paused(ch) for ch in room_settings.get("channels", ["general"]))
-    data = json.dumps({"type": "status", "data": status})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "status", "data": status}))
 
 
 async def broadcast_typing(agent_name: str, is_typing: bool):
-    data = json.dumps({"type": "typing", "agent": agent_name, "active": is_typing})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "typing", "agent": agent_name, "active": is_typing}))
 
 
 async def broadcast_clear(channel: str | None = None):
     payload = {"type": "clear"}
     if channel:
         payload["channel"] = channel
-    data = json.dumps(payload)
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps(payload))
 
 
 async def broadcast_todo_update(msg_id: int, status: str | None):
-    data = json.dumps({"type": "todo_update", "data": {"id": msg_id, "status": status}})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "todo_update", "data": {"id": msg_id, "status": status}}))
 
 
 async def broadcast_settings():
-    data = json.dumps({"type": "settings", "data": room_settings})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "settings", "data": room_settings}))
 
 
 async def broadcast_rule(action: str, rule: dict):
-    data = json.dumps({"type": "rule", "action": action, "data": rule})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "rule", "action": action, "data": rule}))
 
 
 async def broadcast_job(action: str, data: dict):
-    payload = json.dumps({"type": "job", "action": action, "data": data})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(payload)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "job", "action": action, "data": data}))
 
 
 async def broadcast_schedule(action: str, schedule: dict):
-    payload = json.dumps({"type": "schedule", "action": action, "data": schedule})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(payload)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "schedule", "action": action, "data": schedule}))
 
 
 async def broadcast_session(action: str, session: dict):
-    payload = json.dumps({"type": "session", "action": action, "data": session})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(payload)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "session", "action": action, "data": session}))
 
 
 async def broadcast_hats():
-    data = json.dumps({"type": "hats", "data": agent_hats})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "hats", "data": agent_hats}))
 
 
 async def broadcast_agents():
     """Send updated agent config (from registry) to all WebSocket clients."""
     agent_cfg = registry.get_agent_config() if registry else {}
-    data = json.dumps({"type": "agents", "data": agent_cfg})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "agents", "data": agent_cfg}))
 
 
 def _on_registry_change():
@@ -1137,14 +1053,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if ids:
                     deleted = store.delete([int(i) for i in ids])
                     if deleted:
-                        data = json.dumps({"type": "delete", "ids": deleted})
-                        dead = set()
-                        for client in list(ws_clients):
-                            try:
-                                await client.send_text(data)
-                            except Exception:
-                                dead.add(client)
-                        ws_clients.difference_update(dead)
+                        await _broadcast(json.dumps({"type": "delete", "ids": deleted}))
                 continue
 
             elif event.get("type") == "todo_add":
@@ -1235,12 +1144,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif event.get("type") == "rule_remind":
                 rules.set_remind()
-                remind_data = json.dumps({"type": "rules_remind", "data": {}})
-                for client in list(ws_clients):
-                    try:
-                        await client.send_text(remind_data)
-                    except Exception:
-                        pass
+                await _broadcast(json.dumps({"type": "rules_remind", "data": {}}))
                 continue
 
             elif event.get("type") == "update_settings":
@@ -1402,16 +1306,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 _save_settings()
                 await broadcast_settings()
                 # Tell clients to migrate DOM elements
-                rename_event = json.dumps({
+                await _broadcast(json.dumps({
                     "type": "channel_renamed",
                     "old_name": old_name,
                     "new_name": new_name,
-                })
-                for c in list(ws_clients):
-                    try:
-                        await c.send_text(rename_event)
-                    except Exception:
-                        pass
+                }))
 
             elif event.get("type") == "channel_delete":
                 name = (event.get("name") or "").strip().lower()
@@ -1513,14 +1412,7 @@ async def import_history(file: UploadFile = File(...)):
         _save_settings()
         await broadcast_settings()
     # Tell all connected clients to reload (picks up imported messages)
-    data = json.dumps({"type": "reload"})
-    dead = set()
-    for client in list(ws_clients):
-        try:
-            await client.send_text(data)
-        except Exception:
-            dead.add(client)
-    ws_clients.difference_update(dead)
+    await _broadcast(json.dumps({"type": "reload"}))
     return JSONResponse(report)
 
 
@@ -1697,14 +1589,7 @@ async def demote_proposal(msg_id: int):
     updated = store.update_message(msg_id, updated_fields)
     if updated:
         # Broadcast the updated message to all clients
-        payload = json.dumps({"type": "edit", "message": updated})
-        dead = set()
-        for client in list(ws_clients):
-            try:
-                await client.send_text(payload)
-            except Exception:
-                dead.add(client)
-        ws_clients.difference_update(dead)
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
     return updated or {"ok": True}
 
 
@@ -1788,14 +1673,7 @@ async def resolve_rule_proposal(msg_id: int, request: Request):
     updated = store.update_message(msg_id, {"metadata": meta})
     if updated:
         # Broadcast the updated message so all clients re-render the card
-        payload = json.dumps({"type": "edit", "message": updated})
-        dead = set()
-        for client in list(ws_clients):
-            try:
-                await client.send_text(payload)
-            except Exception:
-                dead.add(client)
-        ws_clients.difference_update(dead)
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
     return updated or {"ok": True}
 
 
@@ -1818,14 +1696,7 @@ async def demote_rule_proposal(msg_id: int):
         "metadata": {},
     })
     if updated:
-        payload = json.dumps({"type": "edit", "message": updated})
-        dead = set()
-        for client in list(ws_clients):
-            try:
-                await client.send_text(payload)
-            except Exception:
-                dead.add(client)
-        ws_clients.difference_update(dead)
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
     return updated or {"ok": True}
 
 
@@ -1891,14 +1762,7 @@ async def create_job(request: Request):
             meta["status"] = "accepted"
             updated_msg = store.update_message(anchor_msg_id, {"metadata": meta})
             if updated_msg:
-                payload = json.dumps({"type": "edit", "message": updated_msg})
-                dead = set()
-                for client in list(ws_clients):
-                    try:
-                        await client.send_text(payload)
-                    except Exception:
-                        dead.add(client)
-                ws_clients.difference_update(dead)
+                await _broadcast(json.dumps({"type": "edit", "message": updated_msg}))
     # Post breadcrumb in main timeline with job_id for clickable link
     store.add(created_by, f"Job created: {title}", msg_type="job_created",
               channel=channel, metadata={"job_id": result["id"]})
@@ -2074,12 +1938,7 @@ async def get_active_rules():
 async def remind_agents():
     """Set remind flag — agents get rules on next trigger."""
     rules.set_remind()
-    remind_data = json.dumps({"type": "rules_remind", "data": {}})
-    for client in list(ws_clients):
-        try:
-            await client.send_text(remind_data)
-        except Exception:
-            pass
+    await _broadcast(json.dumps({"type": "rules_remind", "data": {}}))
     return JSONResponse({"ok": True})
 
 
