@@ -6,6 +6,7 @@
 //! watcher, MCP injection) land in later milestones — see
 //! docs/NATIVE_WRAPPER_REWRITE.md.
 
+mod activity;
 mod config;
 mod mcp;
 mod prompt;
