@@ -1,4 +1,4 @@
-"""Tests for wrapper.py MCP config writers.
+"""Tests for the MCP config writers (mcp_inject.py).
 
 Focused on the shape of the JSON written to provider settings files — Gemini
 needs "httpUrl", CodeBuddy needs "url", legacy paths still work.
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from wrapper import _write_json_mcp_settings  # noqa: E402
+from mcp_inject import _write_json_mcp_settings  # noqa: E402
 
 
 class JsonMcpSettingsTests(unittest.TestCase):
