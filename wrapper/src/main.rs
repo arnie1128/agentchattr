@@ -331,9 +331,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOpts> {
         i += 1;
     }
     let agent = agent.ok_or_else(|| anyhow::anyhow!("run-agent requires an agent name"))?;
-    let root = root
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let root = root.unwrap_or_else(discover_root);
     Ok(RunOpts {
         agent,
         root,
@@ -343,6 +341,25 @@ fn parse_run_args(args: &[String]) -> Result<RunOpts> {
         no_restart,
         exec,
     })
+}
+
+/// Discover the agentchattr install root (where `config.toml` lives) when
+/// `--root` isn't given: a per-project `.agentchattr/config.toml` in the current
+/// dir, then a `config.toml` in the current dir, then `AGENTCHATTR_ROOT`, else
+/// the current dir.
+fn discover_root() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project = cwd.join(".agentchattr");
+    if project.join("config.toml").exists() {
+        return project;
+    }
+    if cwd.join("config.toml").exists() {
+        return cwd;
+    }
+    if let Some(root) = std::env::var_os("AGENTCHATTR_ROOT") {
+        return PathBuf::from(root);
+    }
+    cwd
 }
 
 fn run_agent(opts: RunOpts) -> Result<()> {
