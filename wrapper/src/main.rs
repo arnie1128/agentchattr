@@ -7,6 +7,7 @@
 //! docs/NATIVE_WRAPPER_REWRITE.md.
 
 mod config;
+mod mcp;
 mod prompt;
 mod pty;
 mod server;
