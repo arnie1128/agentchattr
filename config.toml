@@ -80,7 +80,8 @@ temperature = 1.0
 [routing]
 # "none" = only route on explicit @mention. "all" = route to all agents by default.
 default = "none"
-max_agent_hops = 4
+# Loop guard: pause a channel after this many consecutive agent-to-agent hops.
+max_agent_hops = 100
 
 [mcp]
 http_port = 8200
