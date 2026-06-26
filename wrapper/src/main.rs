@@ -727,7 +727,9 @@ fn run_agent(opts: RunOpts) -> Result<()> {
     // One persistent stdin pump → whichever PTY is current (survives restarts).
     std::thread::spawn({
         let sw = Arc::clone(&shared_writer);
-        move || pump_input(sw)
+        let client = client.clone();
+        let identity = Arc::clone(&identity);
+        move || pump_input(sw, client, identity)
     });
 
     // Run loop: spawn the agent in a PTY, pump I/O, restart unless --no-restart.
@@ -790,6 +792,7 @@ fn run_agent(opts: RunOpts) -> Result<()> {
         };
 
         if !opts.restart {
+            let _ = host.kill(); // force-kill any lingering child before we exit
             break;
         }
         println!(
@@ -919,13 +922,31 @@ fn answer_dsr(chunk: &[u8], sw: &Arc<Mutex<Option<pty::PtyWriter>>>) -> Vec<u8> 
     out
 }
 
-fn pump_input(sw: Arc<Mutex<Option<pty::PtyWriter>>>) {
+fn pump_input(
+    sw: Arc<Mutex<Option<pty::PtyWriter>>>,
+    client: server::ServerClient,
+    identity: Arc<identity::Identity>,
+) {
     let mut stdin = std::io::stdin();
     let mut buf = [0u8; 1024];
+    // Force-quit escape hatch: two Ctrl+C within 800ms quits the wrapper even if
+    // the agent is wedged (e.g. hung in its own exit hook). A single Ctrl+C is
+    // still forwarded to the agent.
+    let mut last_ctrl_c = Instant::now() - Duration::from_secs(10);
     loop {
         match stdin.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
+                if buf[..n].contains(&0x03) {
+                    let now = Instant::now();
+                    if now.duration_since(last_ctrl_c) < Duration::from_millis(800) {
+                        let _ = crossterm::terminal::disable_raw_mode();
+                        let _ = client.deregister(&identity.name(), &identity.token());
+                        println!("\r\n  Force quit.");
+                        std::process::exit(130);
+                    }
+                    last_ctrl_c = now;
+                }
                 let writer = { sw.lock().unwrap().as_ref().cloned() };
                 if let Some(w) = writer {
                     if let Ok(mut g) = w.lock() {
