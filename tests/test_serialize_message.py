@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentchattr.mcp import mcp_bridge  # noqa: E402
+from src.mcp import mcp_bridge  # noqa: E402
 
 
 class SerializeMessageTests(unittest.TestCase):

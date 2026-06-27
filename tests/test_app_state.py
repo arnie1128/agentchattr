@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentchattr.server import app  # noqa: E402
-from agentchattr.state import app_state  # noqa: E402
-from agentchattr.mcp import mcp_bridge  # noqa: E402
+from src.server import app  # noqa: E402
+from src.state import app_state  # noqa: E402
+from src.mcp import mcp_bridge  # noqa: E402
 
 
 class SharedStateTests(unittest.TestCase):

@@ -19,7 +19,7 @@ import re
 import threading
 from pathlib import Path
 
-from agentchattr.core.atomic_io import write_json_atomic
+from src.core.atomic_io import write_json_atomic
 
 DEFAULT_ROOM_SETTINGS = {
     "title": "agentchattr",

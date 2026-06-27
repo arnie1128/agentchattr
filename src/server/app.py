@@ -1,0 +1,1908 @@
+"""agentchattr — FastAPI web UI + agent auto-trigger."""
+
+import asyncio
+import json
+import re as _re
+import sys
+import threading
+import uuid
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi.requests import Request
+from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from src.storage.store import MessageStore
+from src.storage.rules import RuleStore
+from src.storage.summaries import SummaryStore
+from src.storage.jobs import JobStore
+from src.storage.schedules import ScheduleStore, parse_schedule_spec
+from src.server.router import Router
+from src.server.agents import AgentTrigger
+from src.server.registry import RuntimeRegistry
+from src.session.session_store import SessionStore
+from src.session.session_engine import SessionEngine, auto_cast
+from src.core.version_check import check as run_version_check
+
+from src.server import commands
+from src.state import mcp_state
+from src.server import presence_monitor
+from src.server import uploads
+from src.server import schedule_runner
+from src.storage import settings_store
+from src.state.app_state import state
+
+log = logging.getLogger(__name__)
+
+app = FastAPI(title="agentchattr")
+
+# Live singletons (store/rules/registry/router/session_token/settings/hats/…)
+# live on the shared `state` object from app_state, set by configure().
+# Room settings and agent hats live in lock-guarded stores (settings_store).
+ws_clients: set[WebSocket] = set()
+
+
+def _on_hat_change():
+    """Broadcast the hat snapshot after any HatStore set/clear.
+
+    Registered as the HatStore on_change callback in configure() so MCP's
+    chat_set_hat can mutate hats without importing app (MCP-3a).
+    """
+    if _event_loop:
+        asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
+
+
+def _extract_agent_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-agent-token", "").strip()
+
+
+def _resolve_authenticated_agent(request: Request) -> dict | None:
+    if not state.registry:
+        return None
+    token = _extract_agent_token(request)
+    if not token:
+        return None
+    return state.registry.resolve_token(token)
+
+
+# --- Security middleware ---
+# Paths that don't require the session token (public assets).
+_PUBLIC_PREFIXES = ("/", "/static/")
+
+
+def _install_security_middleware(token: str, cfg: dict):
+    """Add token validation and origin checking middleware to the app."""
+    state.session_token = token
+    port = cfg.get("server", {}).get("port", 8300)
+    allowed_origins = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    }
+
+    class SecurityMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            path = request.url.path
+
+            # Static assets, index page, and uploaded images are public.
+            # The index page injects the token client-side via same-origin script.
+            # Uploads use random filenames and have path-traversal protection.
+            if path == "/" or path.startswith(("/static/", "/uploads/", "/api/roles")):
+                return await call_next(request)
+
+            # Agent registration/heartbeat: loopback only (no remote agent minting).
+            if path.startswith(("/api/register", "/api/deregister/", "/api/heartbeat/")):
+                client_ip = request.client.host if request.client else ""
+                if client_ip not in ("127.0.0.1", "::1", "localhost"):
+                    return JSONResponse(
+                        {"error": f"forbidden: agent registration is restricted to local loopback. Source {client_ip} is not allowed."},
+                        status_code=403,
+                    )
+                return await call_next(request)
+
+            # --- Origin check (blocks cross-origin / DNS-rebinding attacks) ---
+            origin = request.headers.get("origin")
+            if origin and origin not in allowed_origins:
+                return JSONResponse(
+                    {"error": "forbidden: origin not allowed"},
+                    status_code=403,
+                )
+
+            # --- Token check ---
+            # Allow registered agents to authenticate via Bearer token
+            # for /api/messages and /api/send (no browser session needed).
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer ") and (path in ("/api/messages", "/api/send") or path.startswith("/api/rules/")):
+                bearer = auth_header[7:].strip()
+                if state.registry and state.registry.resolve_token(bearer):
+                    return await call_next(request)
+
+            req_token = (
+                request.headers.get("x-session-token")
+                or request.query_params.get("token")
+            )
+            if req_token != state.session_token:
+                return JSONResponse(
+                    {"error": "forbidden: invalid or missing session token"},
+                    status_code=403,
+                )
+
+            return await call_next(request)
+
+    app.add_middleware(SecurityMiddleware)
+
+
+def reachable(name: str) -> bool:
+    """Single source of truth for "can this agent receive a routed message".
+
+    Reachable = claimed (an active identity in the registry) AND present (a
+    fresh MCP heartbeat). Registry owns identity; mcp_state owns presence; this
+    is the one place they are combined. Used by @all routing (see
+    `reachable_names`). The explicit-@mention send gate intentionally gates on
+    presence alone (`mcp_state.is_online`) so an offline-but-claimed mention is
+    queued rather than dropped — a deliberately different decision.
+    """
+    return (
+        bool(state.registry)
+        and name in state.registry.get_active_names()
+        and mcp_state.is_online(name)
+    )
+
+
+def reachable_names() -> set[str]:
+    """The set of reachable agents (claimed AND present) — for @all expansion."""
+    if not state.registry:
+        return set()
+    return {n for n in state.registry.get_active_names() if mcp_state.is_online(n)}
+
+
+def configure(cfg: dict, session_token: str = ""):
+    state.config = cfg
+    # --- Security: store the session token and install middleware ---
+    _install_security_middleware(session_token, cfg)
+
+    data_dir = cfg.get("server", {}).get("data_dir", "./data")
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+
+    log_path = Path(data_dir) / "agentchattr_log.jsonl"
+    legacy_log_path = Path(data_dir) / "room_log.jsonl"
+    if not log_path.exists() and legacy_log_path.exists():
+        # Backward compatibility for existing installs.
+        log_path = legacy_log_path
+
+    state.store = MessageStore(str(log_path))
+    # Initialize store upload dir from config
+    raw_upload_dir = cfg.get("images", {}).get("upload_dir", "./uploads")
+    state.store.upload_dir = Path(raw_upload_dir)
+    
+    # Rules store — migrates from legacy decisions.json automatically
+    rules_path = Path(data_dir) / "rules.json"
+    legacy_decisions = Path(data_dir) / "decisions.json"
+    if not rules_path.exists() and legacy_decisions.exists():
+        legacy_decisions.rename(rules_path)
+    state.rules = RuleStore(str(rules_path))
+    state.rules.on_change(_on_rule_change)
+
+    state.summaries = SummaryStore(str(Path(data_dir) / "summaries.json"))
+
+    # Migrate legacy activities.json → jobs.json
+    jobs_path = Path(data_dir) / "jobs.json"
+    legacy_activities = Path(data_dir) / "activities.json"
+    if not jobs_path.exists() and legacy_activities.exists():
+        legacy_activities.rename(jobs_path)
+
+    state.jobs = JobStore(str(jobs_path))
+    state.jobs.on_change(_on_job_change)
+
+    state.schedules = ScheduleStore(str(Path(data_dir) / "schedules.json"))
+    state.schedules.on_change(_on_schedule_change)
+
+    max_hops = cfg.get("routing", {}).get("max_agent_hops", 4)
+
+    # Registry: single source of truth for all live agent state
+    state.registry = RuntimeRegistry(data_dir=data_dir)
+    state.registry.seed(cfg.get("agents", {}))
+    state.registry.on_change(_on_registry_change)
+
+    # Router starts with base agent names (backward compat for direct MCP users),
+    # registry.on_change updates it dynamically when instances register/deregister
+    agent_names = list(cfg.get("agents", {}).keys())
+    state.router = Router(
+        agent_names=agent_names,
+        default_mention=cfg.get("routing", {}).get("default", "none"),
+        max_hops=max_hops,
+        # @all must only tag reachable agents (claimed identity AND fresh MCP
+        # heartbeat). reachable_names() is the single source for that predicate;
+        # see reachable() for why the explicit-mention send gate differs.
+        online_checker=reachable_names,
+    )
+    state.agents = AgentTrigger(state.registry, data_dir=data_dir)
+
+    # Sessions
+    ROOT = Path(__file__).resolve().parents[2]  # src/server/app.py -> repo root
+    state.session_store = SessionStore(
+        str(Path(data_dir) / "session_runs.json"),
+        templates_dir=str(ROOT / "session-presets"),
+    )
+    state.session_engine = SessionEngine(state.session_store, state.store, state.agents, state.registry)
+    state.session_store.on_change(_on_session_change)
+
+    # Bridge: when ANY message is added to store (including via MCP),
+    # broadcast to all WebSocket clients
+    state.store.on_message(_on_store_message)
+
+    state.settings = settings_store.SettingsStore(Path(data_dir) / "settings.json")
+    state.hats = settings_store.HatStore(Path(data_dir) / "hats.json")
+    state.settings.load()
+    state.hats.load()
+    state.hats.on_change(_on_hat_change)
+
+    # Apply saved loop guard setting
+    _saved_hops = state.settings.get("max_agent_hops")
+    if _saved_hops is not None:
+        state.router.max_hops = _saved_hops
+
+    # Background threads: presence reaper + schedule runner (extracted SRV-7).
+    # The reaper reads live globals (_event_loop, _last_active_channel) via
+    # getters so it always sees the current values.
+    _data_dir = Path(data_dir)
+    threading.Thread(
+        target=lambda: presence_monitor.run(
+            state,
+            get_event_loop=lambda: _event_loop,
+            get_last_active_channel=lambda: _last_active_channel,
+            broadcast_status=broadcast_status,
+            broadcast_raw=_broadcast,
+            data_dir=_data_dir,
+        ),
+        daemon=True,
+    ).start()
+
+    threading.Thread(target=lambda: schedule_runner.run(state), daemon=True).start()
+
+
+# --- Store → WebSocket bridge ---
+
+_event_loop = None  # set by run.py after starting the event loop
+_last_active_channel: str = "general"  # last channel any message was sent in
+
+
+def set_event_loop(loop):
+    global _event_loop
+    _event_loop = loop
+
+
+def _on_store_message(msg: dict):
+    """Called from any thread when a message is added to the store."""
+    if _event_loop is None:
+        return
+    try:
+        # If called from the event loop thread (e.g. WebSocket handler),
+        # schedule directly as a task
+        loop = asyncio.get_running_loop()
+        if loop is _event_loop:
+            asyncio.ensure_future(_handle_new_message(msg))
+            return
+    except RuntimeError:
+        pass  # No running loop — we're in a different thread (MCP)
+    asyncio.run_coroutine_threadsafe(_handle_new_message(msg), _event_loop)
+
+
+def _on_rule_change(action: str, rule: dict):
+    """Called from any thread when a rule changes."""
+    if _event_loop is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        if loop is _event_loop:
+            asyncio.ensure_future(broadcast_rule(action, rule))
+            return
+    except RuntimeError:
+        pass
+    asyncio.run_coroutine_threadsafe(broadcast_rule(action, rule), _event_loop)
+
+
+def _on_job_change(action: str, data: dict):
+    """Called from any thread when a job changes."""
+    if _event_loop is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        if loop is _event_loop:
+            asyncio.ensure_future(broadcast_job(action, data))
+            return
+    except RuntimeError:
+        pass
+    asyncio.run_coroutine_threadsafe(broadcast_job(action, data), _event_loop)
+
+
+def _on_schedule_change(action: str, schedule: dict):
+    """Called from any thread when a schedule changes."""
+    if _event_loop is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        if loop is _event_loop:
+            asyncio.ensure_future(broadcast_schedule(action, schedule))
+            return
+    except RuntimeError:
+        pass
+    asyncio.run_coroutine_threadsafe(broadcast_schedule(action, schedule), _event_loop)
+
+
+def _on_session_change(action: str, session: dict):
+    """Called from any thread when a session changes."""
+    if _event_loop is None:
+        return
+    # Enrich with computed fields so the frontend gets phase_name, current_agent, etc.
+    if state.session_engine:
+        session = state.session_engine._enrich(dict(session))
+
+    # Add completion/interruption banners to chat timeline
+    if action == "complete" and state.store:
+        output_id = session.get("output_message_id")
+        # Tag the output message so it renders highlighted on reload
+        if output_id:
+            msg = state.store.get_by_id(output_id)
+            if msg:
+                meta = msg.get("metadata") or {}
+                meta["session_output"] = True
+                state.store.update_message(output_id, {"metadata": meta})
+        state.store.add(
+            sender="system",
+            text=f"Session complete: {session.get('template_name', '?')}",
+            msg_type="session_end",
+            channel=session.get("channel", "general"),
+            metadata={"session_id": session.get("id"), "output_message_id": output_id},
+        )
+    elif action == "interrupt" and state.store:
+        reason = session.get("interrupt_reason", "interrupted")
+        state.store.add(
+            sender="system",
+            text=f"Session ended: {session.get('template_name', '?')} ({reason})",
+            msg_type="session_end",
+            channel=session.get("channel", "general"),
+            metadata={"session_id": session.get("id"), "reason": reason},
+        )
+
+    try:
+        loop = asyncio.get_running_loop()
+        if loop is _event_loop:
+            asyncio.ensure_future(broadcast_session(action, session))
+            return
+    except RuntimeError:
+        pass
+    asyncio.run_coroutine_threadsafe(broadcast_session(action, session), _event_loop)
+
+
+def _agent_colors(agent_names: list[str]) -> dict[str, str]:
+    """Map each agent name to its avatar hex color — registered instance color,
+    else the configured base color, else a neutral default. Used by /hatmaking."""
+    instances = state.registry.get_all() if state.registry else {}
+    agents_cfg = state.config.get("agents", {})
+    colors = {}
+    for a in agent_names:
+        if a in instances:
+            colors[a] = instances[a].get("color", "#888")
+        else:
+            colors[a] = agents_cfg.get(a, {}).get("color", "#888")
+    return colors
+
+
+def _resolve_targets(raw_targets: list[str]) -> list[str]:
+    """Resolve router targets to concrete registered instances, order-deduped.
+
+    A base family name expands to its live instances (e.g. 'claude' ->
+    'claude-prime' when slot-1 was renamed); unknown/human names pass through.
+    """
+    targets = []
+    for t in raw_targets:
+        if state.registry:
+            targets.extend(state.registry.resolve_to_instances(t))
+        else:
+            targets.append(t)
+    return list(dict.fromkeys(targets))  # dedupe, preserve order
+
+
+async def _trigger_targets(targets, *, channel, chat_msg, prompt=None, job_id=None,
+                           allowed_agent=None, notify_offline=False):
+    """Trigger each resolved target, applying the shared routing gates.
+
+    Used by the channel-message router (_handle_new_message) and the job-message
+    router (post_job_message). Always skips pending (unclaimed) instances. When
+    `allowed_agent` is set, suppresses out-of-turn triggers (session turn guard);
+    when `notify_offline`, posts a "queued" notice for offline targets. `prompt`
+    (pass-through, including "") and `job_id` are forwarded only when supplied so
+    each caller's trigger payload is preserved exactly. `trigger_agent_silent` is
+    deliberately NOT routed here — it is a minimal, gate-free trigger with its own
+    keep-[agent_name] resolution.
+    """
+    for target in targets:
+        if state.registry:
+            inst = state.registry.get_instance(target)
+            if inst and inst.get("state") == "pending":
+                continue
+        if allowed_agent and target != allowed_agent:
+            continue
+        if notify_offline and not mcp_state.is_online(target):
+            state.store.add("system", f"{target} appears offline — message queued.",
+                            msg_type="system", channel=channel)
+        if state.agents.is_available(target):
+            kwargs = {"message": chat_msg, "channel": channel}
+            if prompt is not None:
+                kwargs["prompt"] = prompt
+            if job_id is not None:
+                kwargs["job_id"] = job_id
+            await state.agents.trigger(target, **kwargs)
+
+
+async def _finish_agent_rename(old_name: str, new_id: str, *, broadcast: bool = True):
+    """Common tail after a successful registry.rename: migrate runtime state,
+    rewrite historical senders, and (optionally) notify clients."""
+    mcp_state.migrate_identity(old_name, new_id)
+    state.store.rename_sender(old_name, new_id)
+    if broadcast:
+        await _broadcast(json.dumps({
+            "type": "agent_renamed",
+            "old_name": old_name,
+            "new_name": new_id,
+        }))
+
+
+async def _handle_new_message(msg: dict):
+    """Broadcast message to web clients + check for @mention triggers."""
+    # For broadcast slash commands, suppress the raw message — only the expanded
+    # version should appear. Delete from store if it was persisted (MCP path),
+    # and skip broadcasting the raw text.
+    text = msg.get("text", "")
+    msg_type = msg.get("type", "chat")
+    sender = msg.get("sender", "")
+    channel = msg.get("channel", "general")
+
+    # Track last active channel for leave/join messages (skip system messages)
+    global _last_active_channel
+    if msg_type not in ("system", "leave", "join"):
+        _last_active_channel = channel
+    # Strip @mentions to find the slash command (e.g. "@claude @codex /hatmaking")
+    stripped = _re.sub(r"@[\w-]+\s*", "", text).strip().lower()
+    cmd_word = stripped.split()[0] if stripped else ""
+    is_broadcast_cmd = commands.is_macro(cmd_word)
+    known_agents = set(state.registry.get_all_names()) if state.registry else set()
+    known_agents.update(state.config.get("agents", {}).keys())
+    sender_is_agent = sender in known_agents
+    is_agent_session_draft = sender_is_agent and bool(
+        state.session_engine and state.session_engine.has_draft_block(text))
+    is_hidden_session_request = msg_type == "session_request"
+
+    is_agent_continue = (stripped == "/continue" and sender_is_agent)
+    suppress_broadcast = (
+        is_broadcast_cmd
+        or is_hidden_session_request
+        or is_agent_session_draft
+        or is_agent_continue
+    )
+
+    if not suppress_broadcast:
+        await broadcast(msg)
+
+    # If the raw slash command was persisted (MCP path), silently remove it.
+    # It was never broadcast to WebSocket clients, so no delete event needed.
+    if suppress_broadcast and msg.get("id"):
+        state.store.delete([msg["id"]])
+
+    # System messages never trigger routing - prevents infinite callback loops
+    if sender == "system":
+        return
+
+    # Check for slash commands — use stripped text (sans @mentions)
+    if stripped == "/continue":
+        if sender in known_agents:
+            state.store.add("system", f"Loop guard: only humans can /continue. {sender} tried to self-resume.", channel=channel)
+            return
+        state.router.continue_routing(channel)
+        state.store.add("system", f"Routing resumed by {sender}.", channel=channel)
+        await broadcast_status()
+        return
+
+    # Broadcast macro commands (/hatmaking, /artchallenge, /roastreview,
+    # /poetry) expand into a prompt addressed to every agent, posted as the
+    # sender. Dispatch matches the raw-command suppression above (token-based).
+    if is_broadcast_cmd:
+        agent_names = (state.registry.get_all_names() if state.registry
+                       else list(state.config.get("agents", {}).keys()))
+        expanded = commands.expand(stripped, agent_names, _agent_colors(agent_names))
+        if expanded is not None:
+            state.store.add(sender, expanded, channel=channel)
+        return
+
+    # An agent may propose a session by posting a ```session ...``` block;
+    # session_engine validates it and posts a draft card (the example block in
+    # the request prompt, from a human, is ignored). Routing continues either way.
+    if state.session_engine:
+        state.session_engine.process_draft(text, sender, channel, sender_is_agent)
+
+    targets = _resolve_targets(state.router.get_targets(sender, text, channel))
+
+    if state.router.is_paused(channel):
+        # Only emit the loop guard notice once per pause
+        if not state.router.is_guard_emitted(channel):
+            state.router.set_guard_emitted(channel)
+            state.store.add(
+                "system",
+                f"Loop guard: {state.router.max_hops} agent-to-agent hops reached. "
+                "Type /continue to resume.",
+                channel=channel
+            )
+        return
+
+    # Build a readable message string for the wake prompt
+    chat_msg = f"{sender}: {text}" if text else ""
+    custom_prompt = text if is_hidden_session_request else ""
+
+    # Session turn guard: if a session is active on this channel and the sender
+    # is an agent, only allow triggering the agent whose turn it is.
+    # Human @mentions are always allowed (the session engine handles pausing).
+    allowed_agent = state.session_engine.get_allowed_agent(channel) if state.session_engine and sender_is_agent else None
+
+    await _trigger_targets(
+        targets, channel=channel, chat_msg=chat_msg, prompt=custom_prompt,
+        allowed_agent=allowed_agent, notify_offline=True,
+    )
+
+
+# --- broadcasting ---
+
+async def _broadcast(raw_json: str):
+    """Send a pre-serialized JSON string to all WebSocket clients."""
+    dead = set()
+    for client in list(ws_clients):
+        try:
+            await client.send_text(raw_json)
+        except Exception:
+            dead.add(client)
+    ws_clients.difference_update(dead)
+
+
+async def broadcast(msg: dict):
+    await _broadcast(json.dumps({"type": "message", "data": msg}))
+
+
+async def broadcast_status():
+    status = state.agents.get_status()
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.settings.channels())
+    await _broadcast(json.dumps({"type": "status", "data": status}))
+
+
+async def broadcast_typing(agent_name: str, is_typing: bool):
+    await _broadcast(json.dumps({"type": "typing", "agent": agent_name, "active": is_typing}))
+
+
+async def broadcast_clear(channel: str | None = None):
+    payload = {"type": "clear"}
+    if channel:
+        payload["channel"] = channel
+    await _broadcast(json.dumps(payload))
+
+
+async def broadcast_todo_update(msg_id: int, status: str | None):
+    await _broadcast(json.dumps({"type": "todo_update", "data": {"id": msg_id, "status": status}}))
+
+
+async def broadcast_settings():
+    await _broadcast(json.dumps({"type": "settings", "data": state.settings.snapshot()}))
+
+
+async def broadcast_rule(action: str, rule: dict):
+    await _broadcast(json.dumps({"type": "rule", "action": action, "data": rule}))
+
+
+async def broadcast_job(action: str, data: dict):
+    await _broadcast(json.dumps({"type": "job", "action": action, "data": data}))
+
+
+async def broadcast_schedule(action: str, schedule: dict):
+    await _broadcast(json.dumps({"type": "schedule", "action": action, "data": schedule}))
+
+
+async def broadcast_session(action: str, session: dict):
+    await _broadcast(json.dumps({"type": "session", "action": action, "data": session}))
+
+
+async def broadcast_hats():
+    await _broadcast(json.dumps({"type": "hats", "data": state.hats.snapshot()}))
+
+
+async def broadcast_agents():
+    """Send updated agent config (from registry) to all WebSocket clients."""
+    agent_cfg = state.registry.get_agent_config() if state.registry else {}
+    await _broadcast(json.dumps({"type": "agents", "data": agent_cfg}))
+
+
+def _on_registry_change():
+    """Called from registry (any thread) when instances register/deregister/claim/rename."""
+    # Update router with current agent names (base names + registered instances)
+    if state.router and state.registry:
+        base_names = list(state.registry.get_bases().keys())
+        # Only include active instances in routing (pending ones are inert)
+        instance_names = state.registry.get_active_names()
+        all_names = list(set(base_names + instance_names))
+        state.router.update_agents(all_names)
+    # Broadcast to WebSocket clients
+    if _event_loop:
+        asyncio.run_coroutine_threadsafe(broadcast_agents(), _event_loop)
+        asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
+
+
+# --- WebSocket ---
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    # --- Security: validate session token on WebSocket connect ---
+    token = websocket.query_params.get("token", "")
+    if token != state.session_token:
+        # Must accept before closing so the browser receives the close frame.
+        # Code 4003 triggers an auto-reload in the client to pick up the new token.
+        await websocket.accept()
+        await websocket.close(code=4003, reason="forbidden: invalid session token")
+        return
+
+    await websocket.accept()
+    ws_clients.add(websocket)
+
+    # Send settings
+    await websocket.send_text(json.dumps({"type": "settings", "data": state.settings.snapshot()}))
+
+    # Send registered instances (used for pills/mentions)
+    agent_cfg = state.registry.get_agent_config() if state.registry else {}
+    await websocket.send_text(json.dumps({"type": "agents", "data": agent_cfg}))
+
+    # Send base agent colors (used for message coloring, no pills)
+    base_colors = {}
+    for name, cfg in state.config.get("agents", {}).items():
+        base_colors[name] = {"color": cfg.get("color", "#888"), "label": cfg.get("label", name)}
+    await websocket.send_text(json.dumps({"type": "base_colors", "data": base_colors}))
+
+    # Send todos {msg_id: status}
+    await websocket.send_text(json.dumps({"type": "todos", "data": state.store.get_todos()}))
+
+    # Send rules
+    await websocket.send_text(json.dumps({"type": "rules", "data": state.rules.list_all()}))
+
+    # Send hats
+    await websocket.send_text(json.dumps({"type": "hats", "data": state.hats.snapshot()}))
+
+    # Send jobs
+    await websocket.send_text(json.dumps({"type": "jobs", "data": state.jobs.list_all()}))
+
+    # Send schedules
+    await websocket.send_text(json.dumps({"type": "schedules", "data": state.schedules.list_all()}))
+
+    # Send pending instances (so late-connecting browsers still see the naming lightbox)
+    if state.registry:
+        for inst in state.registry.get_all().values():
+            if inst.get("state") == "pending":
+                await websocket.send_text(json.dumps({
+                    "type": "pending_instance",
+                    "name": inst["name"],
+                    "base": inst.get("base", ""),
+                    "label": inst.get("label", inst["name"]),
+                    "color": inst.get("color", "#888"),
+                }))
+
+    # Send history (per channel based on history_limit)
+    limit_val = state.settings.get("history_limit", "all")
+    count = 10000 if limit_val == "all" else int(limit_val)
+
+    history = []
+    for ch in state.settings.channels():
+        history.extend(state.store.get_recent(count, channel=ch))
+    
+    # Sort history by timestamp to interleave messages from different channels correctly
+    history.sort(key=lambda m: m.get("timestamp", 0))
+    
+    for msg in history:
+        await websocket.send_text(json.dumps({"type": "message", "data": msg}))
+
+    # Send status
+    await broadcast_status()
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            event = json.loads(raw)
+
+            if event.get("type") == "message":
+                text = event.get("text", "").strip()
+                attachments = event.get("attachments", [])
+                sender = event.get("sender") or state.settings.get("username", "user")
+                channel = event.get("channel", "general")
+
+                if not text and not attachments:
+                    continue
+
+                # Command handling
+                if text.startswith("/"):
+                    cmd_parts = text.split()
+                    cmd = cmd_parts[0].lower()
+                    if cmd == "/clear":
+                        state.store.clear(channel=channel)
+                        await broadcast_clear(channel=channel)
+                        continue
+                    if cmd == "/continue":
+                        state.router.continue_routing(channel)  # NEW-SRV-5: resume the typed channel, not always general
+                        state.store.add("system", "Resuming agent conversation...", msg_type="system", channel=channel)
+                        await broadcast_status()
+                        continue
+                    # Broadcast slash commands — expand without storing the raw command.
+                    # _handle_new_message will store the expanded version.
+                    if cmd in commands.BROADCAST_COMMANDS:
+                        await _handle_new_message({"sender": sender, "text": text, "channel": channel})
+                        continue
+
+                # Store message — the on_message callback handles broadcast + triggers
+                reply_to = event.get("reply_to")
+                if reply_to is not None:
+                    reply_to = int(reply_to)
+
+                state.store.add(sender, text, attachments=attachments, reply_to=reply_to,
+                          channel=channel)
+
+            elif event.get("type") == "delete":
+                ids = event.get("ids", [])
+                if ids:
+                    deleted = state.store.delete([int(i) for i in ids])
+                    if deleted:
+                        await _broadcast(json.dumps({"type": "delete", "ids": deleted}))
+                continue
+
+            elif event.get("type") == "todo_add":
+                msg_id = event.get("id")
+                if msg_id is not None:
+                    state.store.add_todo(int(msg_id))
+                    await broadcast_todo_update(int(msg_id), "todo")
+                continue
+
+            elif event.get("type") == "todo_toggle":
+                msg_id = event.get("id")
+                if msg_id is not None:
+                    mid = int(msg_id)
+                    status = state.store.get_todo_status(mid)
+                    if status == "todo":
+                        state.store.complete_todo(mid)
+                        await broadcast_todo_update(mid, "done")
+                    elif status == "done":
+                        state.store.reopen_todo(mid)
+                        await broadcast_todo_update(mid, "todo")
+                continue
+
+            elif event.get("type") == "todo_remove":
+                msg_id = event.get("id")
+                if msg_id is not None:
+                    state.store.remove_todo(int(msg_id))
+                    await broadcast_todo_update(int(msg_id), None)
+                continue
+
+            elif event.get("type") in ("decision_propose", "rule_propose"):
+                text = event.get("text") or event.get("decision", "")
+                text = text.strip()
+                author = event.get("author") or event.get("owner") or state.settings.get("username", "user")
+                reason = event.get("reason", "")
+                is_human = author.lower() == state.settings.get("username", "user").lower()
+                if text:
+                    rule = state.rules.propose(text, author, reason)
+                    if rule:
+                        if is_human:
+                            # Human-created rules go straight to draft, no card
+                            state.rules.make_draft(rule["id"])
+                        else:
+                            # Agent proposals get a card in the timeline
+                            channel = event.get("channel", "general")
+                            msg = state.store.add(
+                                author, f"Rule proposal: {text}",
+                                msg_type="rule_proposal",
+                                channel=channel,
+                                metadata={"rule_id": rule["id"], "text": text, "status": "pending"},
+                            )
+                            # store.add() fires _on_store_message → broadcast already.
+                            # Do NOT call broadcast(msg) again here.
+                continue
+
+            elif event.get("type") in ("decision_approve", "rule_activate"):
+                rid = event.get("id")
+                if rid is not None:
+                    state.rules.activate(int(rid))
+                continue
+
+            elif event.get("type") in ("decision_unapprove", "rule_deactivate"):
+                rid = event.get("id")
+                if rid is not None:
+                    state.rules.deactivate(int(rid))
+                continue
+
+            elif event.get("type") == "rule_make_draft":
+                rid = event.get("id")
+                if rid is not None:
+                    state.rules.make_draft(int(rid))
+                continue
+
+            elif event.get("type") in ("decision_edit", "rule_edit"):
+                rid = event.get("id")
+                if rid is not None:
+                    state.rules.edit(
+                        int(rid),
+                        text=event.get("text") or event.get("decision"),
+                        reason=event.get("reason"),
+                    )
+                continue
+
+            elif event.get("type") in ("decision_delete", "rule_delete"):
+                rid = event.get("id")
+                if rid is not None:
+                    state.rules.delete(int(rid))
+                continue
+
+            elif event.get("type") == "rule_remind":
+                state.rules.set_remind()
+                await _broadcast(json.dumps({"type": "rules_remind", "data": {}}))
+                continue
+
+            elif event.get("type") == "update_settings":
+                changed = state.settings.update(event.get("data", {}))
+                if "max_agent_hops" in changed:
+                    state.router.max_hops = changed["max_agent_hops"]
+                await broadcast_settings()
+
+            elif event.get("type") == "rename_agent":
+                agent_name = (event.get("name") or "").strip()
+                new_label = (event.get("label") or "").strip()
+                if agent_name and new_label and state.registry:
+                    # Derive a sanitized sender ID from the label
+                    import re as _re
+                    new_id = _re.sub(r'[^a-z0-9-]', '', new_label.lower().replace(' ', '-')).strip('-')
+                    if not new_id:
+                        new_id = agent_name  # fallback: keep old name, just change label
+                    if new_id == agent_name:
+                        # Same ID — label-only change
+                        state.registry.set_label(agent_name, new_label)
+                    else:
+                        result = state.registry.rename(agent_name, new_id, new_label)
+                        if isinstance(result, str):
+                            # Rename failed (collision etc.) — fall back to label-only
+                            state.registry.set_label(agent_name, new_label)
+                        else:
+                            await _finish_agent_rename(agent_name, new_id)
+                continue
+
+            elif event.get("type") == "name_pending":
+                # Human names a pending instance (from lightbox)
+                agent_name = (event.get("name") or "").strip()
+                new_label = (event.get("label") or "").strip()
+                if agent_name and state.registry:
+                    if not new_label:
+                        # Accept default name
+                        state.registry.confirm_pending(agent_name)
+                    else:
+                        import re as _re
+                        new_id = _re.sub(r'[^a-z0-9-]', '', new_label.lower().replace(' ', '-')).strip('-')
+                        if not new_id:
+                            new_id = agent_name
+                        if new_id == agent_name:
+                            # Same ID — just update label and confirm
+                            state.registry.set_label(agent_name, new_label)
+                            state.registry.confirm_pending(agent_name)
+                        else:
+                            result = state.registry.rename(agent_name, new_id, new_label)
+                            if isinstance(result, str):
+                                # Rename failed — just confirm with label
+                                state.registry.set_label(agent_name, new_label)
+                                state.registry.confirm_pending(agent_name)
+                            else:
+                                # Rename succeeded — confirm new name
+                                state.registry.confirm_pending(new_id)
+                                await _finish_agent_rename(agent_name, new_id)
+                continue
+
+            elif event.get("type") == "channel_create":
+                if state.settings.add_channel(event.get("name")) is None:
+                    await broadcast_settings()
+
+            elif event.get("type") == "channel_rename":
+                old_name = (event.get("old_name") or "").strip().lower()
+                new_name = (event.get("new_name") or "").strip().lower()
+                if state.settings.rename_channel(old_name, new_name) is None:
+                    state.store.rename_channel(old_name, new_name)
+                    mcp_state.migrate_cursors_rename(old_name, new_name)
+                    await broadcast_settings()
+                    # Tell clients to migrate DOM elements
+                    await _broadcast(json.dumps({
+                        "type": "channel_renamed",
+                        "old_name": old_name,
+                        "new_name": new_name,
+                    }))
+
+            elif event.get("type") == "channel_delete":
+                name = (event.get("name") or "").strip().lower()
+                if state.settings.remove_channel(name) is None:
+                    state.store.delete_channel(name)
+                    mcp_state.migrate_cursors_delete(name)
+                    await broadcast_settings()
+
+    except WebSocketDisconnect:
+        ws_clients.discard(websocket)
+    except Exception:
+        ws_clients.discard(websocket)
+        log.exception("WebSocket error")
+
+
+# --- REST endpoints ---
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB default
+
+
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    upload_dir = Path(state.config.get("images", {}).get("upload_dir", "./uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = Path(file.filename).suffix or ".png"
+    if ext.lower() not in uploads.ALLOWED_UPLOAD_EXTS:
+        return JSONResponse({"error": f"unsupported file type: {ext}"}, status_code=400)
+
+    content = await file.read()
+    max_bytes = state.config.get("images", {}).get("max_size_mb", 10) * 1024 * 1024
+    if len(content) > max_bytes:
+        return JSONResponse({"error": f"file too large (max {max_bytes // 1024 // 1024} MB)"}, status_code=400)
+
+    filename = f"{uuid.uuid4().hex[:8]}{ext}"
+    filepath = upload_dir / filename
+    filepath.write_bytes(content)
+
+    return JSONResponse({
+        "name": file.filename,
+        "url": f"/uploads/{filename}",
+    })
+
+
+# --- Export / Import ---
+
+@app.get("/api/export")
+async def export_history():
+    """Download a zip archive of project history."""
+    from src.storage import archive as _archive
+    import time as _time
+    try:
+        zip_bytes = _archive.build_export(
+            state.store, state.jobs, state.rules, state.summaries,
+            app_version=state.config.get("server", {}).get("version", ""),
+        )
+    except Exception as exc:
+        return JSONResponse({"error": f"export failed: {exc}"}, status_code=500)
+    filename = f"agentchattr-export-{_time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/import")
+async def import_history(file: UploadFile = File(...)):
+    """Upload a zip archive and merge it into current stores."""
+    from src.storage import archive as _archive
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        return JSONResponse({"error": "unsupported file type: expected .zip"}, status_code=400)
+    content = await file.read()
+    if len(content) > _archive.MAX_IMPORT_SIZE:
+        return JSONResponse(
+            {"error": f"file too large (max {_archive.MAX_IMPORT_SIZE // 1024 // 1024}MB)"},
+            status_code=400,
+        )
+    channel_list = state.settings.channels()
+    max_ch = state.settings.get("max_channels", 8)
+    report = _archive.import_archive(
+        content, state.store, state.jobs, state.rules, state.summaries,
+        channel_list, max_channels=max_ch,
+    )
+    if not report.get("ok"):
+        error = report.get("error", "import failed")
+        status = 409 if "already running" in error else 400
+        return JSONResponse({"error": error}, status_code=status)
+    # Update channel list if new channels were created
+    if report["channels"]["created"]:
+        state.settings.replace_channels(channel_list)
+        await broadcast_settings()
+    # Tell all connected clients to reload (picks up imported messages)
+    await _broadcast(json.dumps({"type": "reload"}))
+    return JSONResponse(report)
+
+
+@app.get("/api/messages")
+async def get_messages(since_id: int = 0, limit: int = 50, channel: str = ""):
+    ch = channel if channel else None
+    if since_id:
+        return state.store.get_since(since_id, channel=ch)
+    return state.store.get_recent(limit, channel=ch)
+
+
+@app.post("/api/send")
+async def api_send(request: Request):
+    """REST endpoint for API agents to send messages without WebSocket.
+
+    Authenticated via Bearer registration token. Sender is resolved from
+    the token — the agent cannot impersonate another identity.
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return JSONResponse({"error": "missing Authorization: Bearer <token>"}, status_code=401)
+    token = auth[7:].strip()
+    inst = state.registry.resolve_token(token) if state.registry else None
+    if not inst:
+        return JSONResponse({"error": "invalid or expired token"}, status_code=403)
+
+    sender = inst["name"]
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "text is required"}, status_code=400)
+    channel = body.get("channel", "general")
+
+    msg = state.store.add(sender, text, channel=channel)
+    return JSONResponse(msg)
+
+
+@app.get("/api/status")
+async def get_status():
+    status = state.agents.get_status()
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.settings.channels())
+    return status
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return state.settings.snapshot()
+
+
+@app.delete("/api/hat/{agent_name}")
+async def delete_hat(agent_name: str):
+    """Remove an agent's hat (called by the trash-can UI)."""
+    state.hats.clear(agent_name)  # on_change broadcasts
+    return JSONResponse({"ok": True})
+
+
+# --- Jobs API ---
+
+@app.get("/api/schedules")
+async def get_schedules():
+    return state.schedules.list_all()
+
+
+@app.post("/api/schedules")
+async def create_schedule(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    targets = body.get("targets", [])
+    channel = body.get("channel", "general")
+    spec = body.get("spec", "")
+    one_shot = body.get("one_shot", False)
+    send_at_date = body.get("send_at_date", "")  # "YYYY-MM-DD" for one-shot
+    created_by = body.get("created_by", "user")
+    if not prompt or not targets or not spec:
+        return JSONResponse({"error": "prompt, targets, and spec are required"}, status_code=400)
+    interval_sec, daily_at = parse_schedule_spec(spec)
+    if interval_sec is None:
+        return JSONResponse({"error": f"Invalid schedule spec: {spec}"}, status_code=400)
+    # For one-shot, compute exact send_at timestamp from date + daily_at time
+    send_at = None
+    if one_shot and daily_at and send_at_date:
+        import datetime as _dt
+        try:
+            dt = _dt.datetime.strptime(f"{send_at_date} {daily_at}", "%Y-%m-%d %H:%M")
+            send_at = dt.timestamp()
+        except ValueError:
+            pass
+    s = state.schedules.create(
+        prompt=prompt, targets=targets, channel=channel,
+        interval_seconds=interval_sec, daily_at=daily_at,
+        one_shot=one_shot, send_at=send_at,
+        created_by=created_by,
+    )
+    return JSONResponse(s)
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str):
+    removed = state.schedules.delete(schedule_id)
+    if not removed:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.patch("/api/schedules/{schedule_id}/toggle")
+async def toggle_schedule(schedule_id: str):
+    result = state.schedules.toggle(schedule_id)
+    if not result:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(result)
+
+
+@app.get("/api/jobs")
+async def get_jobs(channel: str = "", status: str = ""):
+    """List jobs, optionally filtered."""
+    ch = channel if channel else None
+    st = status if status else None
+    return state.jobs.list_all(channel=ch, status=st)
+
+
+@app.post("/api/messages/{msg_id}/demote")
+async def demote_proposal(msg_id: int):
+    """Demote a proposal-style message back to a regular chat message."""
+    msg = state.store.get_by_id(msg_id)
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    msg_type = msg.get("type")
+    if msg_type not in {"job_proposal", "session_draft"}:
+        return JSONResponse({"error": "not a proposal"}, status_code=400)
+    meta = msg.get("metadata", {})
+    updated_fields = {"type": "chat", "metadata": {}}
+
+    if msg_type == "job_proposal":
+        body_text = meta.get("body", "")
+        title = meta.get("title", "")
+        plain_text = f"**{title}**\n\n{body_text}" if title else body_text or msg.get("text", "")
+        updated_fields["text"] = plain_text
+    else:
+        tmpl = meta.get("template")
+        errors = meta.get("errors", []) or []
+        proposed_by = meta.get("proposed_by") or msg.get("sender", "system")
+        parts = []
+
+        if isinstance(tmpl, dict):
+            name = str(tmpl.get("name", "")).strip()
+            desc = str(tmpl.get("description", "")).strip()
+            if name:
+                parts.append(f"**{name}**")
+            if desc:
+                parts.append(desc)
+            phases = tmpl.get("phases") or []
+            if phases:
+                lines = []
+                for i, ph in enumerate(phases, 1):
+                    ph_name = ph.get("name", f"Round {i}")
+                    participants = ", ".join(ph.get("participants", []))
+                    line = f"{i}. {ph_name}"
+                    if participants:
+                        line += f" -- {participants}"
+                    prompt = (ph.get("prompt") or "").strip()
+                    if prompt:
+                        line += f"\n   {prompt}"
+                    lines.append(line)
+                parts.append("\n".join(lines))
+        else:
+            label = str(msg.get("text", "")).strip() or "Session draft"
+            parts.append(label)
+            if errors:
+                parts.append("\n".join(f"- {e}" for e in errors))
+
+        updated_fields["sender"] = proposed_by
+        updated_fields["text"] = "\n\n".join(p for p in parts if p).strip()
+
+    updated = state.store.update_message(msg_id, updated_fields)
+    if updated:
+        # Broadcast the updated message to all clients
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
+    return updated or {"ok": True}
+
+
+@app.post("/api/messages/{msg_id}/resolve_decision")
+async def resolve_decision(msg_id: int, request: Request):
+    """Resolve an inline decision card by recording the chosen option."""
+    body = await request.json()
+    chosen = body.get("choice", "")
+    if not chosen:
+        return JSONResponse({"error": "choice is required"}, status_code=400)
+    # Atomic check + resolve under the store lock to prevent a double-click race.
+    error, channel, sender = state.store.resolve_decision(msg_id, chosen)
+    if error:
+        return JSONResponse({"error": error[0]}, status_code=error[1])
+    # Post the chosen answer as a regular chat message tagged @sender
+    username = state.settings.get("username", "user")
+    reply_text = f"@{sender} {chosen}" if sender else chosen
+    try:
+        state.store.add(username, reply_text, reply_to=msg_id, channel=channel)
+    except Exception:
+        import traceback; traceback.print_exc()
+    # Broadcast updated decision card so the UI swaps buttons to resolved state
+    updated = state.store.get_by_id(msg_id)
+    if updated:
+        await _broadcast(json.dumps({"type": "message_update", "message": updated}))
+    return {"ok": True, "chosen": chosen}
+
+
+@app.post("/api/messages/{msg_id}/resolve_rule_proposal")
+async def resolve_rule_proposal(msg_id: int, request: Request):
+    """Activate or dismiss a rule proposal."""
+    msg = state.store.get_by_id(msg_id)
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    if msg.get("type") != "rule_proposal":
+        return JSONResponse({"error": "not a rule proposal"}, status_code=400)
+    body = await request.json()
+    action = body.get("action", "")
+    meta = msg.get("metadata", {})
+    rule_id = meta.get("rule_id")
+
+    if action == "activate" and rule_id is not None:
+        state.rules.activate(int(rule_id))
+        meta["status"] = "activated"
+    elif action == "draft" and rule_id is not None:
+        state.rules.make_draft(int(rule_id))
+        meta["status"] = "drafted"
+    elif action == "dismiss" and rule_id is not None:
+        state.rules.delete(int(rule_id))
+        meta["status"] = "dismissed"
+    else:
+        return JSONResponse({"error": "invalid action"}, status_code=400)
+
+    updated = state.store.update_message(msg_id, {"metadata": meta})
+    if updated:
+        # Broadcast the updated message so all clients re-render the card
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
+    return updated or {"ok": True}
+
+
+@app.post("/api/messages/{msg_id}/demote_rule_proposal")
+async def demote_rule_proposal(msg_id: int):
+    """Demote a rule_proposal message back to a regular chat message and delete the rule."""
+    msg = state.store.get_by_id(msg_id)
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    if msg.get("type") != "rule_proposal":
+        return JSONResponse({"error": "not a rule proposal"}, status_code=400)
+    meta = msg.get("metadata", {})
+    rule_id = meta.get("rule_id")
+    if rule_id is not None:
+        state.rules.delete(int(rule_id))
+    text = meta.get("text", msg.get("text", ""))
+    updated = state.store.update_message(msg_id, {
+        "type": "chat",
+        "text": text,
+        "metadata": {},
+    })
+    if updated:
+        await _broadcast(json.dumps({"type": "edit", "message": updated}))
+    return updated or {"ok": True}
+
+
+@app.post("/api/trigger-agent")
+async def trigger_agent_silent(request: Request):
+    """Silently trigger an agent with a message (no chat message posted)."""
+    body = await request.json()
+    agent_name = body.get("agent", "").strip()
+    message = body.get("message", "").strip()
+    channel = body.get("channel", "general")
+    source_msg_id = body.get("source_msg_id")
+    if not agent_name or not message:
+        return JSONResponse({"error": "agent and message required"}, status_code=400)
+
+    custom_prompt = body.get("prompt", "").strip()
+    if not custom_prompt:
+        if source_msg_id is not None:
+            custom_prompt = (
+                f"use mcp to read #{channel} - you're mentioned, take appropriate action and respond "
+                f"- conversion request: use chat history to find message #{source_msg_id} "
+                f"and use chat_propose_job to propose it as a job with title<=80 chars and body<=500 chars."
+            )
+        else:
+            custom_prompt = (
+                f"use mcp to read #{channel} - you're mentioned, take appropriate action and respond "
+                f"- conversion request: use chat_propose_job to propose a job from the referenced message."
+            )
+    # Resolve to instances if multi-instance
+    targets = [agent_name]
+    if state.registry:
+        resolved = state.registry.resolve_to_instances(agent_name)
+        if resolved:
+            targets = resolved
+    for target in targets:
+        if state.agents.is_available(target):
+            await state.agents.trigger(target, message=message, channel=channel, prompt=custom_prompt)
+    return {"ok": True, "triggered": targets}
+
+
+@app.post("/api/jobs")
+async def create_job(request: Request):
+    """Create a new job."""
+    body = await request.json()
+    title = body.get("title", "").strip()
+    if not title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+    job_type = body.get("type", "job")
+    channel = body.get("channel", "general")
+    created_by = body.get("created_by", "user")
+    anchor_msg_id = body.get("anchor_msg_id")
+    assignee = body.get("assignee", "")
+    job_body = body.get("body", "")
+    result = state.jobs.create(
+        title=title, job_type=job_type, channel=channel,
+        created_by=created_by, anchor_msg_id=anchor_msg_id,
+        assignee=assignee, body=job_body,
+    )
+    # Mark the proposal message as accepted so it persists across refresh
+    if anchor_msg_id:
+        anchor_msg = state.store.get_by_id(anchor_msg_id)
+        if anchor_msg and anchor_msg.get("type") == "job_proposal":
+            meta = dict(anchor_msg.get("metadata", {}))
+            meta["status"] = "accepted"
+            updated_msg = state.store.update_message(anchor_msg_id, {"metadata": meta})
+            if updated_msg:
+                await _broadcast(json.dumps({"type": "edit", "message": updated_msg}))
+    # Post breadcrumb in main timeline with job_id for clickable link
+    state.store.add(created_by, f"Job created: {title}", msg_type="job_created",
+              channel=channel, metadata={"job_id": result["id"]})
+    return result
+
+
+@app.patch("/api/jobs/{job_id}")
+async def update_job(job_id: int, request: Request):
+    """Update a job's status, title, or assignee."""
+    body = await request.json()
+    result = None
+    if "status" in body:
+        result = state.jobs.update_status(job_id, body["status"])
+    if "title" in body:
+        result = state.jobs.update_title(job_id, body["title"])
+    if "assignee" in body:
+        result = state.jobs.update_assignee(job_id, body["assignee"])
+    if result is None:
+        return JSONResponse({"error": "not found or invalid"}, status_code=404)
+    return result
+
+
+@app.post("/api/jobs/reorder")
+async def reorder_jobs(request: Request):
+    """Reorder jobs within a status group (globally, not per-channel)."""
+    body = await request.json()
+    status = body.get("status", "open")
+    ordered_ids = body.get("ordered_ids", [])
+    if not isinstance(ordered_ids, list) or len(ordered_ids) == 0:
+        return JSONResponse({"error": "ordered_ids required"}, status_code=400)
+    updated = state.jobs.reorder(status=status, ordered_ids=ordered_ids)
+    return {"ok": True, "updated": len(updated)}
+
+
+@app.get("/api/jobs/{job_id}/messages")
+async def get_job_messages(job_id: int):
+    """Get all messages in a job."""
+    msgs = state.jobs.get_messages(job_id)
+    if msgs is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return msgs
+
+
+@app.post("/api/jobs/{job_id}/messages")
+async def post_job_message(job_id: int, request: Request):
+    """Post a message to a job."""
+    body = await request.json()
+    text = body.get("text", "").strip()
+    sender = body.get("sender", "user")
+    attachments = body.get("attachments", [])
+    if not text and not attachments:
+        return JSONResponse({"error": "text or attachments required"}, status_code=400)
+    msg_type = body.get("type", "chat")
+    msg = state.jobs.add_message(job_id, sender, text,
+                           attachments=attachments, msg_type=msg_type)
+    if msg is None:
+        return JSONResponse({"error": "job not found"}, status_code=404)
+
+    # Route @mentions in job messages to agents (with job_id context)
+    job = state.jobs.get(job_id)
+    if job:
+        channel = job.get("channel", "general")
+        targets = _resolve_targets(state.router.get_targets(sender, text, channel))
+
+        chat_msg = f"{sender}: {text}" if text else ""
+        await _trigger_targets(targets, channel=channel, chat_msg=chat_msg, job_id=job_id)
+
+    return msg
+
+
+@app.delete("/api/jobs/{job_id}/messages/{msg_id}")
+async def delete_job_message(job_id: int, msg_id: int):
+    """Soft-delete a message in a job thread."""
+    result = state.jobs.delete_message(job_id, msg_id)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"ok": True, **result}
+
+
+@app.post("/api/jobs/{job_id}/messages/{msg_index}/resolve")
+async def resolve_job_message(job_id: int, msg_index: int, request: Request):
+    """Resolve a suggestion message (accept/dismiss)."""
+    body = await request.json()
+    resolution = body.get("resolution", "dismissed")
+    error, job, msg = state.jobs.resolve_message(job_id, msg_index, resolution)
+    if error:
+        status = 404 if error == "not found" else 400
+        return JSONResponse({"error": error}, status_code=status)
+
+    # If accepted, trigger the suggesting agent with context
+    if resolution == "accepted" and msg.get("sender"):
+        agent_name = msg["sender"]
+        channel = job.get("channel", "general")
+        if state.agents.is_available(agent_name):
+            await state.agents.trigger(agent_name,
+                                 message=f"Your suggestion was accepted: {msg.get('text', '')}",
+                                 channel=channel, job_id=job_id)
+
+    return {"ok": True, "resolution": resolution}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: int, request: Request):
+    """Delete or archive a job. ?permanent=true for real delete."""
+    permanent = request.query_params.get("permanent", "").lower() == "true"
+    if permanent:
+        result = state.jobs.delete(job_id)
+    else:
+        result = state.jobs.update_status(job_id, "archived")
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return result
+
+
+@app.get("/api/roles")
+async def get_roles():
+    """Get all agent roles."""
+    return mcp_state.get_all_roles()
+
+
+@app.post("/api/roles/{agent_name}")
+async def set_agent_role(agent_name: str, request: Request):
+    """Set or clear an agent's role."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    role = body.get("role", "").strip()
+    mcp_state.set_role(agent_name, role)
+    await broadcast_status()
+    return JSONResponse({"ok": True, "role": role})
+
+
+# --- Rules API ---
+
+@app.get("/api/rules")
+async def get_rules():
+    """Get all rules (all states)."""
+    return JSONResponse(state.rules.list_all())
+
+
+@app.get("/api/rules/active")
+async def get_active_rules():
+    """Get compact active rules for agent injection."""
+    data = state.rules.active_list()
+    data["refresh_interval"] = state.settings.get("rules_refresh_interval", 10)
+    return JSONResponse(data)
+
+
+@app.post("/api/rules/remind")
+async def remind_agents():
+    """Set remind flag — agents get rules on next trigger."""
+    state.rules.set_remind()
+    await _broadcast(json.dumps({"type": "rules_remind", "data": {}}))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/rules/agent_sync/{agent_name}")
+async def report_rule_sync(agent_name: str, request: Request):
+    """Wrapper reports that an agent has seen rules at a given epoch."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    epoch = body.get("epoch", 0)
+    state.rules.report_agent_sync(agent_name, epoch)
+    # Clear remind flag once any agent has seen the updated rules
+    state.rules.clear_remind()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/rules/freshness")
+async def get_rules_freshness():
+    """Get per-agent sync status."""
+    return JSONResponse(state.rules.agent_freshness())
+
+
+@app.post("/api/register")
+async def register_agent(request: Request):
+    """Wrapper calls this to register a new agent instance."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    base = body.get("base", "")
+    label = body.get("label")
+    if not base:
+        return JSONResponse({"error": "base is required"}, status_code=400)
+    result = state.registry.register(base, label)
+    if result is None:
+        return JSONResponse({"error": f"unknown base: {base}"}, status_code=400)
+    # Touch presence so the instance doesn't immediately time out
+    mcp_state.touch_presence(result["name"])
+    # If slot 1 was renamed (e.g. "claude" → "claude-1"), migrate state
+    renamed = result.pop("_renamed_slot1", None)
+    if renamed:
+        await _finish_agent_rename(renamed["old"], renamed["new"])
+    # Broadcast pending_instance event so UI can show naming lightbox
+    if result.get("state") == "pending" and _event_loop:
+        pending_event = json.dumps({
+            "type": "pending_instance",
+            "name": result["name"],
+            "base": base,
+            "label": result.get("label", result["name"]),
+            "color": result.get("color", "#888"),
+        })
+        asyncio.run_coroutine_threadsafe(_broadcast(pending_event), _event_loop)
+    return JSONResponse(result)
+
+
+@app.post("/api/deregister/{name}")
+async def deregister_agent(name: str, request: Request):
+    """Wrapper calls this on shutdown to remove its instance."""
+    auth_inst = _resolve_authenticated_agent(request)
+    presented_token = _extract_agent_token(request)
+    if presented_token and not auth_inst:
+        return JSONResponse({"error": "stale_session"}, status_code=409)
+    if auth_inst:
+        name = auth_inst["name"]
+    elif state.registry and state.registry.is_agent_family(name):
+        return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
+
+    result = state.registry.deregister(name)
+    if result is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Clean up runtime state (presence, activity, cursors, rename chains)
+    mcp_state.purge_identity(name)
+    state.registry.clean_renames_for(name)
+    # If the remaining instance was renamed back (e.g. "claude-1" → "claude"), migrate state
+    renamed = result.pop("_renamed_back", None)
+    if renamed:
+        await _finish_agent_rename(renamed["old"], renamed["new"])
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/label/{name}")
+async def rename_agent_label(name: str, request: Request):
+    """Rename an agent (human-initiated from UI). Changes identity + label."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    label = body.get("label", "").strip()
+    if not label:
+        return JSONResponse({"error": "label is required"}, status_code=400)
+
+    import re as _re
+    new_id = _re.sub(r'[^a-z0-9-]', '', label.lower().replace(' ', '-')).strip('-')
+    if not new_id:
+        new_id = name
+
+    if new_id == name:
+        # Same ID — label-only change
+        if state.registry.set_label(name, label):
+            return JSONResponse({"ok": True})
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    result = state.registry.rename(name, new_id, label)
+    if isinstance(result, str):
+        # Rename failed — try label-only as fallback
+        if state.registry.set_label(name, label):
+            return JSONResponse({"ok": True, "warning": result})
+        return JSONResponse({"error": result}, status_code=400)
+
+    # No broadcast here: the human-UI rename path historically did not emit an
+    # agent_renamed event (the caller reconciles via the REST response). Preserved
+    # via broadcast=False — see SRV-5 note about this asymmetry.
+    await _finish_agent_rename(name, new_id, broadcast=False)
+    return JSONResponse({"ok": True, "new_name": new_id})
+
+
+@app.post("/api/heartbeat/{agent_name}")
+async def heartbeat(agent_name: str, request: Request):
+    """Wrapper calls this to keep presence alive and report activity.
+
+    Returns the canonical name from the registry so the wrapper can
+    detect renames (e.g. claim renamed 'claude-2' to 'claude-music').
+    """
+    auth_inst = _resolve_authenticated_agent(request)
+    presented_token = _extract_agent_token(request)
+    if presented_token and not auth_inst:
+        return JSONResponse({"error": "stale_session"}, status_code=409)
+    if state.registry and state.registry.is_agent_family(agent_name) and not auth_inst:
+        return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
+
+    current_name = auth_inst["name"] if auth_inst else agent_name
+    mcp_state.touch_presence(current_name)
+    # Optional activity report from wrapper's terminal monitor
+    _activity_changed = False
+    try:
+        body = await request.json()
+        if "active" in body:
+            active_val = bool(body["active"])
+            _activity_changed = mcp_state.report_active(current_name, active_val)
+    except Exception:
+        pass  # No body = plain heartbeat
+    # Immediately broadcast on activity state change (don't wait for background checker)
+    if _activity_changed:
+        await broadcast_status()
+    # Return canonical name so wrapper can track renames
+    resp = {"ok": True, "name": current_name}
+    if state.registry:
+        # Follow rename chain (e.g. claude-2 was renamed to claude-music)
+        canonical = state.registry.resolve_name(current_name)
+        inst = state.registry.get_instance(canonical)
+        # If rename chain didn't help, try family-based lookup
+        # (handles case where _renames was cleared by server restart but
+        # the instance was claimed/renamed via MCP)
+        if not inst:
+            base = current_name.split("-")[0] if "-" in current_name else current_name
+            family_inst = state.registry.get_family_instance(base)
+            if family_inst:
+                inst = family_inst
+                canonical = inst["name"]
+        if inst:
+            resp["name"] = inst["name"]
+            resp["pending"] = inst.get("state") == "pending"
+            # Also update presence under the canonical name
+            if canonical != current_name:
+                mcp_state.touch_presence(canonical)
+    return resp
+
+
+# --- Open agent session in terminal ---
+
+@app.get("/api/platform")
+async def get_platform():
+    """Return the server's platform so the web UI can match path formats."""
+    import sys
+    return JSONResponse({"platform": sys.platform})
+
+
+@app.post("/api/open-path")
+async def open_path(body: dict):
+    """Open a file or directory in the native file manager.
+
+    Cross-platform: Explorer on Windows, Finder on macOS, xdg-open on Linux.
+
+    Security note: This endpoint is intended for local-only use (127.0.0.1).
+    Do not expose this server on a public network without additional access controls.
+    """
+    import subprocess
+    import sys
+
+    path = body.get("path", "")
+    if not path:
+        return JSONResponse({"error": "no path"}, status_code=400)
+
+    p = Path(path)
+    try:
+        if sys.platform == "win32":
+            if p.is_file():
+                subprocess.Popen(["explorer", "/select,", str(p)])
+            elif p.is_dir():
+                subprocess.Popen(["explorer", str(p)])
+            else:
+                return JSONResponse({"error": "path not found"}, status_code=404)
+        elif sys.platform == "darwin":
+            if p.is_file():
+                subprocess.Popen(["open", "-R", str(p)])
+            elif p.is_dir():
+                subprocess.Popen(["open", str(p)])
+            else:
+                return JSONResponse({"error": "path not found"}, status_code=404)
+        else:
+            # Linux — xdg-open opens the containing folder for files
+            if p.is_file():
+                subprocess.Popen(["xdg-open", str(p.parent)])
+            elif p.is_dir():
+                subprocess.Popen(["xdg-open", str(p)])
+            else:
+                return JSONResponse({"error": "path not found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse({"ok": True})
+
+
+# Serve uploaded images
+# --- Sessions API ---
+
+@app.get("/api/sessions/templates")
+async def get_session_templates():
+    if not state.session_store:
+        return JSONResponse({"error": "sessions not configured"}, status_code=500)
+    return JSONResponse(state.session_store.get_templates())
+
+
+@app.get("/api/sessions/active")
+async def get_active_session(channel: str = "general"):
+    if not state.session_engine:
+        return JSONResponse(None)
+    session = state.session_engine.get_active(channel)
+    return JSONResponse(session)
+
+
+@app.get("/api/sessions/active-all")
+async def get_all_active_sessions():
+    if not state.session_engine:
+        return JSONResponse([])
+    return JSONResponse(state.session_engine.list_active())
+
+
+@app.post("/api/sessions/start")
+async def start_session(request: Request):
+    if not state.session_engine or not state.session_store:
+        return JSONResponse({"error": "sessions not configured"}, status_code=500)
+    body = await request.json()
+    template_id = body.get("template_id", "")
+    draft_message_id = body.get("draft_message_id")
+    channel = body.get("channel", "general")
+    cast = body.get("cast", {})
+    goal = body.get("goal", "")
+    started_by = body.get("started_by", "user")
+
+    # If running from a draft, load the inline template from message metadata
+    tmpl = None
+    if draft_message_id:
+        draft_msg = state.store.get_by_id(int(draft_message_id))
+        if not draft_msg:
+            return JSONResponse({"error": "draft message not found"}, status_code=404)
+        meta = draft_msg.get("metadata", {})
+        if not meta.get("valid"):
+            return JSONResponse({"error": "draft is not valid"}, status_code=400)
+        tmpl = meta.get("template")
+        if not tmpl:
+            return JSONResponse({"error": "draft has no template"}, status_code=400)
+        # Register as a temporary template
+        template_id = tmpl.get("id", f"draft-{draft_message_id}")
+        tmpl["id"] = template_id
+        tmpl["is_custom"] = True
+        state.session_store.register_transient_template(tmpl)
+
+    # Validate template exists
+    if not tmpl:
+        tmpl = state.session_store.get_template(template_id)
+    if not tmpl:
+        return JSONResponse({"error": f"unknown template: {template_id}"}, status_code=400)
+
+    # Auto-fill cast from available agents if not fully provided
+    if not cast:
+        online = state.registry.get_active_names() if state.registry else []
+        roles = tmpl.get("roles", [])
+        cast = auto_cast(roles, online, started_by)
+        if not cast:
+            return JSONResponse(
+                {"error": "not enough agents online to fill all roles"},
+                status_code=400,
+            )
+
+    session = state.session_engine.start_session(template_id, channel, cast, started_by, goal)
+    if not session:
+        return JSONResponse({"error": "could not start session (one may already be active)"}, status_code=409)
+
+    # Add start banner to chat (only after confirmed success)
+    state.store.add(
+        sender="system",
+        text=f"Session started: {tmpl.get('name', template_id)}",
+        msg_type="session_start",
+        channel=channel,
+        metadata={"template_id": template_id, "goal": goal, "session_id": session["id"]},
+    )
+    state.session_engine.emit_current_phase_banner(session)
+
+    return JSONResponse(session)
+
+
+@app.post("/api/sessions/{session_id}/end")
+async def end_session(session_id: int):
+    if not state.session_engine:
+        return JSONResponse({"error": "sessions not configured"}, status_code=500)
+    session = state.session_engine.end_session(session_id)
+    if not session:
+        return JSONResponse({"error": "session not found or already ended"}, status_code=404)
+
+    # Banner is added by _on_session_change("interrupt", ...) callback
+    return JSONResponse(session)
+
+
+@app.post("/api/sessions/request-draft")
+async def request_session_draft(request: Request):
+    """Ask an agent to design a session template. Called by the 'Design a session' UI."""
+    body = await request.json()
+    agent_name = body.get("agent", "").strip()
+    description = body.get("description", "").strip()
+    channel = body.get("channel", "general")
+    sender = body.get("sender", "user")
+    if not agent_name or not description:
+        return JSONResponse({"error": "agent and description required"}, status_code=400)
+
+    mention_str = f"@{agent_name}"
+    state.store.add(
+        "system",
+        f"Requested session draft from {mention_str}. Wait for a proposal.",
+        channel=channel,
+    )
+    state.store.add(
+        sender,
+        f"{mention_str} Design a session workflow for: **{description}**\n\n"
+        "Respond with a single chat message containing a fenced JSON code block with this exact structure:\n"
+        "```session\n"
+        '{"name": "...", "description": "...", "roles": ["role1", "role2", ...], '
+        '"phases": [{"name": "...", "participants": ["role1"], "prompt": "...", "is_output": false}, ...]}\n'
+        "```\n"
+        "Rules: max 6 roles, max 6 phases, max 4 participants per phase, max 200 chars per prompt. "
+        "Mark exactly one phase as `is_output: true` (the final deliverable). "
+        f"Keep it focused and sequential. Use the chat_send tool to post your response in the #{channel} channel. "
+        "Do NOT respond only in your terminal.",
+        channel=channel,
+        msg_type="session_request",
+        metadata={"session_request": True, "mentions": [f"@{agent_name}"], "request": description},
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/sessions/save-draft")
+async def save_draft(request: Request):
+    if not state.session_store:
+        return JSONResponse({"error": "sessions not configured"}, status_code=500)
+    body = await request.json()
+    msg_id = body.get("message_id")
+    if not msg_id:
+        return JSONResponse({"error": "message_id required"}, status_code=400)
+    msg = state.store.get_by_id(int(msg_id))
+    if not msg:
+        return JSONResponse({"error": "message not found"}, status_code=404)
+    meta = msg.get("metadata", {})
+    if not meta.get("valid"):
+        return JSONResponse({"error": "draft is not valid"}, status_code=400)
+    tmpl = meta.get("template")
+    if not tmpl:
+        return JSONResponse({"error": "no template in draft"}, status_code=400)
+
+    tmpl.setdefault("id", f"custom-{msg_id}")
+    state.session_store.save_custom_template(tmpl)
+    return JSONResponse({"ok": True, "template_id": tmpl["id"]})
+
+
+@app.delete("/api/sessions/templates/{template_id}")
+async def delete_session_template(template_id: str):
+    if not state.session_store:
+        return JSONResponse({"error": "sessions not configured"}, status_code=500)
+    deleted = state.session_store.delete_custom_template(template_id)
+    if not deleted:
+        return JSONResponse({"error": "template not found or not custom"}, status_code=404)
+    return JSONResponse({"ok": True, "template_id": template_id})
+
+
+# --- Version check (GitHub release notifier) — logic lives in version_check.py (SRV-8) ---
+
+@app.get("/api/version_check")
+async def version_check():
+    """Check for newer releases on GitHub."""
+    loop = asyncio.get_event_loop()
+    return JSONResponse(await loop.run_in_executor(None, run_version_check))
+
+
+@app.get("/uploads/{filename}")
+async def serve_upload(filename: str):
+    upload_dir = Path(state.config.get("images", {}).get("upload_dir", "./uploads"))
+    filepath = (upload_dir / filename).resolve()
+    if not filepath.is_relative_to(upload_dir.resolve()):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if filepath.exists():
+        return FileResponse(filepath)
+    return JSONResponse({"error": "not found"}, status_code=404)

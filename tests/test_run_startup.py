@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentchattr.state import app_state  # noqa: E402
+from src.state import app_state  # noqa: E402
 import run  # noqa: E402
 
 

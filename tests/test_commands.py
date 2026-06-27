@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentchattr.server import commands  # noqa: E402
+from src.server import commands  # noqa: E402
 
 AGENTS = ["claude", "codex"]
 COLORS = {"claude": "#f80", "codex": "#08f"}

@@ -17,7 +17,7 @@ import logging
 import time
 from pathlib import Path
 
-from agentchattr.state import mcp_state
+from src.state import mcp_state
 
 log = logging.getLogger(__name__)
 

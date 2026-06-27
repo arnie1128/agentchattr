@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentchattr.mcp.mcp_inject import _write_json_mcp_settings  # noqa: E402
+from src.mcp.mcp_inject import _write_json_mcp_settings  # noqa: E402
 
 
 class JsonMcpSettingsTests(unittest.TestCase):
@@ -111,7 +111,7 @@ class BearerFlagInjectTests(unittest.TestCase):
     """The proxy-free codex inject path (MCP-2): direct URL + bearer-from-env."""
 
     def test_bearer_flag_emits_url_and_token_env_flags_token_out_of_argv(self):
-        from agentchattr.mcp.mcp_inject import _apply_mcp_inject, SERVER_NAME
+        from src.mcp.mcp_inject import _apply_mcp_inject, SERVER_NAME
 
         cfg = {"mcp_inject": "bearer_flag", "mcp_transport": "http"}
         args, env, _ = _apply_mcp_inject(
@@ -125,7 +125,7 @@ class BearerFlagInjectTests(unittest.TestCase):
         self.assertNotIn("tok-xyz", joined)  # token never in argv
 
     def test_bearer_flag_custom_env_var(self):
-        from agentchattr.mcp.mcp_inject import _apply_mcp_inject
+        from src.mcp.mcp_inject import _apply_mcp_inject
 
         cfg = {"mcp_inject": "bearer_flag", "mcp_bearer_env_var": "MY_TOK"}
         args, env, _ = _apply_mcp_inject(
@@ -137,7 +137,7 @@ class BearerFlagInjectTests(unittest.TestCase):
 
     def test_codex_default_is_bearer_flag_proxy_free(self):
         # MCP-2: codex's built-in default is now bearer_flag, not proxy_flag.
-        from agentchattr.mcp.mcp_inject import _resolve_mcp_inject, _apply_mcp_inject, SERVER_NAME
+        from src.mcp.mcp_inject import _resolve_mcp_inject, _apply_mcp_inject, SERVER_NAME
 
         cfg = _resolve_mcp_inject("codex", {})
         self.assertEqual(cfg.get("mcp_inject"), "bearer_flag")

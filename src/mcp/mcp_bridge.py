@@ -14,9 +14,9 @@ from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from agentchattr.state import mcp_state
-from agentchattr.server import uploads
-from agentchattr.state.app_state import state
+from src.state import mcp_state
+from src.server import uploads
+from src.state.app_state import state
 
 log = logging.getLogger(__name__)
 

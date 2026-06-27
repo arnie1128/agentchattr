@@ -27,15 +27,13 @@ INCLUDE_FILES = [
     "README.md",
     "LICENSE",
     "VERSION",
-    "screenshot.png",
-    "gang.gif",
 ]
 
 INCLUDE_DIRS = [
-    "agentchattr",
+    "src",
     "static",
     "launchers",
-    "session_templates",
+    "session-presets",
     "project-template",
 ]
 

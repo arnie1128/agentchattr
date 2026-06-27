@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from agentchattr.wrapper import supervisor
+from src.wrapper import supervisor
 
 
 def _safe_tmux_component(value: str, *, fallback: str = "default", max_len: int = 32) -> str:

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 # Shared runtime singletons (populated by app.configure()). Imported at module
 # scope so the boot-resume hook can reach the session engine without a global.
-from agentchattr.state.app_state import state  # noqa: E402
+from src.state.app_state import state  # noqa: E402
 
 
 def resume_sessions_on_boot():
@@ -58,7 +58,7 @@ def main():
     # wrappers use identical extraction logic.
     _parse_args()
 
-    from agentchattr.core.config_loader import apply_cli_overrides, load_config
+    from src.core.config_loader import apply_cli_overrides, load_config
     apply_cli_overrides()
 
     config_path = ROOT / "config.toml"
@@ -72,13 +72,13 @@ def main():
     session_token = secrets.token_hex(32)
 
     # Configure the FastAPI app (populates the shared app_state.state object)
-    from agentchattr.server.app import app, configure, set_event_loop
+    from src.server.app import app, configure, set_event_loop
     configure(config, session_token=session_token)
 
     # mcp_bridge (tools/servers) and mcp_state (presence/cursors/roles) both read
     # the same app_state.state object — no re-export needed.
-    from agentchattr.mcp import mcp_bridge
-    from agentchattr.state import mcp_state
+    from src.mcp import mcp_bridge
+    from src.state import mcp_state
 
     # Enable cursor and role persistence across restarts
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
