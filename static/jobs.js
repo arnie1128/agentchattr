@@ -1460,10 +1460,10 @@ function handleJobEvent(action, data) {
 // ---------------------------------------------------------------------------
 
 function showConvertToJobModal(msgId) {
-    const msgEl = document.querySelector(`.message[data-id="${msgId}"]`);
-    if (!msgEl) return;
-    const rawText = msgEl.dataset.rawText || '';
-    const msgSender = msgEl.querySelector('.msg-sender')?.textContent || Store.get('username');
+    const m = window.getMessageById ? window.getMessageById(msgId) : null;
+    if (!m) return;
+    const rawText = m.text || '';
+    const msgSender = m.sender || Store.get('username');
 
     let modal = document.getElementById('convert-job-modal');
     if (!modal) {

@@ -29,6 +29,16 @@ Store.set('colorOverrides', JSON.parse(localStorage.getItem('agentchattr-color-o
 Store.set('agentRoles', {});  // name -> role string; single owner is Store (FE-4, shared with naming-lightbox panel)
 let schedulesList = [];  // array of schedule objects from server
 
+// Messages model (FE-6): id -> raw msg object. The single source of truth for
+// message data, replacing the old DOM-scrape reads. appendMessage populates it;
+// the edit/delete/clear/rename/channel-rename handlers keep it in sync. Keyed by
+// String(msg.id) so number ids (from onclick handlers) and string ids (from
+// el.dataset.id) resolve to the same entry.
+const messagesById = new Map();
+// Accessor for sibling panels (jobs.js convert-to-job) that previously scraped
+// el.dataset.rawText / .msg-sender — they now read the model via this shim.
+window.getMessageById = (id) => messagesById.get(String(id));
+
 // Expose the remaining non-state shims that extracted modules read via window.*
 // (SESSION_TOKEN/ws/autoScroll are live chat.js locals). The 7 cross-module
 // state keys are now owned by Store (FE-3) — siblings read them via Store.get
@@ -296,6 +306,7 @@ function appendMessage(msg) {
     el.dataset.id = msg.id;
     const msgChannel = msg.channel || 'general';
     el.dataset.channel = msgChannel;
+    messagesById.set(String(msg.id), msg);  // FE-6: model owns the data
 
     // Dispatch to a renderer registered under msg.type (the seam sessions.js
     // and jobs.js also use). A 'system'-sent message with no type-specific
@@ -454,12 +465,12 @@ function _renderChat(el, msg) {
     // Reply quote (if this message is a reply)
     let replyHtml = '';
     if (msg.reply_to !== undefined && msg.reply_to !== null) {
-        const parentEl = document.querySelector(`.message[data-id="${msg.reply_to}"]`);
-        if (parentEl) {
-            const parentSender = parentEl.querySelector('.msg-sender')?.textContent || '?';
-            const parentText = parentEl.dataset.rawText || parentEl.querySelector('.msg-text')?.textContent || '';
+        const parent = messagesById.get(String(msg.reply_to));
+        if (parent) {
+            const parentSender = parent.sender || '?';
+            const parentText = parent.text || '';
             const truncated = parentText.length > 80 ? parentText.slice(0, 80) + '...' : parentText;
-            const parentColor = parentEl.querySelector('.msg-sender')?.style.color || 'var(--text-dim)';
+            const parentColor = getColor(parentSender);
             replyHtml = `<div class="reply-quote" onclick="scrollToMessage(${msg.reply_to})"><span class="reply-sender" style="color: ${parentColor}">${escapeHtml(parentSender)}</span> ${escapeHtml(truncated)}</div>`;
         }
     }
@@ -470,7 +481,6 @@ function _renderChat(el, msg) {
     const avatarHtml = `<div class="avatar-wrap" data-agent="${escapeHtml(agentKey)}"><div class="avatar" style="background-color: ${senderColor}">${getAvatarSvg(msg.sender)}</div>${hatHtml}</div>`;
 
     const statusLabel = todoStatusLabel(todoStatus);
-    el.dataset.rawText = msg.text;
     const senderRole = Store.get('agentRoles')[msg.sender] || '';
     const roleClass = senderRole ? 'bubble-role has-role' : 'bubble-role';
     const rolePillHtml = !isSelf ? `<button class="${roleClass}" onclick="showBubbleRolePicker(this, '${escapeHtml(msg.sender)}')" title="${senderRole ? escapeHtml(senderRole) : 'Set role'}">${senderRole || 'choose a role'}</button>` : '';
@@ -585,11 +595,11 @@ function applyAgentConfig(data) {
 function recolorMessages() {
     const msgs = document.querySelectorAll('.message[data-id]');
     for (const el of msgs) {
+        const m = messagesById.get(String(el.dataset.id));
+        if (!m || !m.sender) continue;  // join/leave etc. have no .msg-sender; guards below no-op them
+        const color = getColor(m.sender);
         const sender = el.querySelector('.msg-sender');
-        if (!sender) continue;
-        const name = sender.textContent.trim();
-        const color = getColor(name);
-        sender.style.color = color;
+        if (sender) sender.style.color = color;
         // Update bubble color
         const bubble = el.querySelector('.chat-bubble');
         if (bubble) bubble.style.setProperty('--bubble-color', color);
@@ -598,8 +608,8 @@ function recolorMessages() {
         if (avatar) avatar.style.backgroundColor = color;
         // Re-render markdown with updated mention colors and hashtags
         const textEl = el.querySelector('.msg-text');
-        if (textEl && el.dataset.rawText) {
-            textEl.innerHTML = styleHashtags(renderMarkdown(el.dataset.rawText));
+        if (textEl && m.text != null) {
+            textEl.innerHTML = styleHashtags(renderMarkdown(m.text));
             addCodeCopyButtons(el);
         }
     }
@@ -900,9 +910,9 @@ function _syncBubbleRolePills(agentName) {
     const role = String(Store.get('agentRoles')[agentName] || '').trim();
     const pillText = role || 'choose a role';
     document.querySelectorAll('.message').forEach(msg => {
-        const senderEl = msg.querySelector('.msg-sender');
+        const m = messagesById.get(String(msg.dataset.id));
         const btn = msg.querySelector('.bubble-role');
-        if (!btn || !senderEl || senderEl.textContent !== agentName) return;
+        if (!btn || !m || m.sender !== agentName) return;
         btn.textContent = pillText;
         btn.title = role || 'Set role';
         btn.classList.toggle('has-role', !!role);
@@ -1613,7 +1623,8 @@ function copyMessage(msgId, event) {
     if (!el) return;
     const msgText = el.querySelector('.msg-text');
     const html = msgText?.innerHTML || '';
-    const markdown = el.dataset.rawText || msgText?.innerText || '';
+    const m = messagesById.get(String(msgId));
+    const markdown = (m && m.text != null) ? m.text : (msgText?.innerText || '');
     const done = () => {
         const btn = el.querySelector('.bubble-copy');
         if (btn) {
@@ -1634,10 +1645,10 @@ function copyMessage(msgId, event) {
 
 function startReply(msgId, event) {
     if (event) event.stopPropagation();
-    const el = document.querySelector(`.message[data-id="${msgId}"]`);
-    if (!el) return;
-    const sender = el.querySelector('.msg-sender')?.textContent?.trim() || '?';
-    const text = el.dataset.rawText || el.querySelector('.msg-text')?.textContent || '';
+    const m = messagesById.get(String(msgId));
+    if (!m) return;
+    const sender = (m.sender || '').trim() || '?';
+    const text = m.text != null ? m.text : '';
     replyingTo = { id: msgId, sender, text };
     renderReplyPreview();
 
@@ -1935,6 +1946,7 @@ function handleDeleteBroadcast(ids) {
     for (const id of ids) {
         const el = document.querySelector(`.message[data-id="${id}"]`);
         if (el) el.remove();
+        messagesById.delete(String(id));  // FE-6: keep the model in sync
         // Clean from todos
         delete todos[id];
     }
@@ -1968,27 +1980,29 @@ function renderTodosPanel() {
     const sorted = todoIds.map(Number).sort((a, b) => a - b);
 
     for (const id of sorted) {
-        const el = document.querySelector(`.message[data-id="${id}"]`);
-        if (!el) continue;
+        const m = messagesById.get(String(id));
+        if (!m) continue;  // FE-6: model is the source of truth (skips deleted messages)
 
         const status = todos[id];
         const item = document.createElement('div');
         item.className = `todo-item ${status === 'done' ? 'todo-done' : ''}`;
 
-        const time = el.querySelector('.msg-time')?.textContent || '';
-        const sender = (el.querySelector('.msg-sender')?.textContent || '').trim();
-        const text = el.querySelector('.msg-text')?.textContent || '';
-        const senderColor = el.querySelector('.msg-sender')?.style.color || 'var(--text)';
+        const time = m.time || '';
+        const sender = (m.sender || '').trim();
+        const senderColor = getColor(sender);
+        // Rendered text preview from the model's raw markdown (matches the bubble's .msg-text)
+        const _tmp = document.createElement('div');
+        _tmp.innerHTML = styleHashtags(renderMarkdown(m.text || ''));
+        const text = _tmp.textContent || '';
 
         const check = status === 'done' ? '&#10003;' : '&#9675;';
         const checkClass = status === 'done' ? 'todo-check done' : 'todo-check';
-        const msgChannel = el.dataset.channel || 'general';
+        const msgChannel = m.channel || 'general';
 
         item.innerHTML = `<button class="${checkClass}" onclick="todoToggle(${id})">${check}</button><span class="msg-time" style="color:var(--accent);font-weight:600;margin-right:4px">#${msgChannel}</span> <span class="msg-time">${escapeHtml(time)}</span> <span class="msg-sender" style="color: ${senderColor}">${escapeHtml(sender)}</span> <span class="msg-text">${escapeHtml(text)}</span><button class="dismiss-btn danger" onclick="todoRemove(${id})" title="Remove from todos">&times;</button>`;
         item.addEventListener('click', (e) => {
             if (e.target.closest('button')) return;
             // Cross-channel pin: switch channel if needed
-            const msgChannel = el.dataset.channel || 'general';
             if (msgChannel !== activeChannel) {
                 switchChannel(msgChannel);
             }
@@ -2749,9 +2763,11 @@ Hub.on('agent_renamed', function (event) {
     const newAgentKey = (resolveAgent(event.new_name.toLowerCase()) || event.new_name).toLowerCase();
     const newHat = agentHats[newAgentKey] || '';
     document.querySelectorAll('#messages .message').forEach(el => {
-        // Regular chat messages
+        // Regular chat messages — identify by the model, not a scraped .msg-sender
+        const m = messagesById.get(String(el.dataset.id));
         const senderEl = el.querySelector('.msg-sender');
-        if (senderEl && senderEl.textContent === event.old_name) {
+        if (m && m.sender === event.old_name && senderEl) {
+            m.sender = event.new_name;  // keep the model in sync
 
             senderEl.textContent = event.new_name;
             senderEl.style.color = newColor;
@@ -2895,6 +2911,10 @@ Hub.on('channel_renamed', function (event) {
             el.dataset.channel = event.new_name;
         }
     }
+    // Migrate the model's channel field too (FE-6) so clear-by-channel stays correct
+    for (const m of messagesById.values()) {
+        if ((m.channel || 'general') === event.old_name) m.channel = event.new_name;
+    }
     // Update per-channel date tracking
     if (lastMessageDates[event.old_name]) {
         lastMessageDates[event.new_name] = lastMessageDates[event.old_name];
@@ -2945,12 +2965,17 @@ Hub.on('clear', function (event) {
             }
         }
         toRemove.forEach(el => el.remove());
+        // Drop the cleared channel's messages from the model too (FE-6)
+        for (const [k, m] of messagesById) {
+            if ((m.channel || 'general') === clearChannel) messagesById.delete(k);
+        }
         // Clean up orphaned date dividers and reset tracking
         delete lastMessageDates[clearChannel];
         filterMessagesByChannel();
     } else {
         // Full clear (all channels)
         document.getElementById('messages').innerHTML = '';
+        messagesById.clear();  // FE-6
         lastMessageDate = null;
         lastMessageDates = {};
     }
