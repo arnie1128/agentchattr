@@ -1,6 +1,6 @@
 # Architecture review — backlog
 
-Status: **in progress** — Batches 0–3 done, Batch 4 partial (8/9) · Branch: `refactor/arch-backlog`
+Status: **in progress** — Batches 0–3 done, Batch 4: 9/9 core cleanups done; WRAP-4/5 (larger, absorbs WRAP-3 closures) remaining · Branch: `refactor/arch-backlog`
 
 ## Progress
 
@@ -32,7 +32,7 @@ Partials note what was intentionally deferred and where it sequences next.
 | SRV-6 | done | `settings_store.py` `SettingsStore`+`HatStore` — lock + validated `update(patch)` + atomic persist; 55-line validator moved out of app.py |
 | SRV-3 | done | `commands.py` macro dispatch + draft logic → `session_engine.process_draft`; thin route-and-trigger core |
 | FE-4 | done | inbound `onmessage` chain → per-type `Hub.on` (chat.js); switch deleted, `onmessage` is just `Hub.emit` |
-| FE-5 | pending | `appendMessage` variants → `_messageRenderers` registry |
+| FE-5 | done | `appendMessage` type-switch → `_messageRenderers` (join/leave/summary/proposals/system) + `_renderChat`; appendMessage = dispatch + scroll bookkeeping |
 | WRAP-4/5 | pending | shared `run_loop(backend)` + `identity.py` (absorbs WRAP-3 closure cluster) |
 | MCP-2 | verify-gated | needs live codex static-bearer-header check; cannot run headless |
 | STATE-7, FE-6 | deferred | large/strategic — explicit go decision required |

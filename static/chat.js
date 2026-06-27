@@ -462,150 +462,12 @@ function appendMessage(msg) {
     const msgChannel = msg.channel || 'general';
     el.dataset.channel = msgChannel;
 
-    if (msg.type === 'join' || msg.type === 'leave') {
-        el.classList.add('join-msg');
-        const color = getColor(msg.sender);
-        el.innerHTML = `<span class="join-dot" style="background: ${color}"></span><span class="join-text"><strong style="color: ${color}">${escapeHtml(msg.sender)}</strong> ${msg.type === 'join' ? 'joined' : 'left'}</span>`;
-    } else if (msg.type === 'summary') {
-        el.classList.add('summary-msg');
-        const color = getColor(msg.sender);
-        el.innerHTML = `<div class="summary-card"><span class="summary-pill">Summary</span><span class="summary-author" style="color: ${color}">${escapeHtml(msg.sender)}</span><div class="summary-text">${escapeHtml(msg.text)}</div></div>`;
-    } else if (msg.type === 'job_proposal') {
-        el.classList.add('proposal-msg');
-        const meta = msg.metadata || {};
-        const title = escapeHtml(meta.title || '');
-        const body = meta.body ? renderMarkdown(meta.body) : '';
-        const color = getColor(msg.sender);
-        const status = meta.status || 'pending';
-        const isPending = status === 'pending';
-        el.dataset.proposalTitle = meta.title || '';
-        el.dataset.proposalBody = meta.body || '';
-        el.dataset.proposalSender = msg.sender || '';
-        el.innerHTML = `
-            <div class="proposal-card ${isPending ? '' : 'proposal-resolved'}">
-                <div class="proposal-header">
-                    <span class="proposal-pill">Job Proposal</span>
-                    <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
-                </div>
-                <div class="proposal-title">${title}</div>
-                ${body ? `<div class="proposal-body">${body}</div>` : ''}
-                ${isPending ? `
-                    <div class="proposal-actions">
-                        <button class="proposal-accept" onclick="acceptProposal(${msg.id})">Accept</button>
-                        <button class="proposal-request-changes" onclick="requestChangesProposal(${msg.id})">Request Changes</button>
-                        <button class="proposal-dismiss" onclick="dismissProposal(${msg.id})">Dismiss</button>
-                    </div>
-                ` : `
-                    <div class="proposal-status-resolved">${status === 'accepted' ? 'Accepted' : 'Dismissed'}</div>
-                `}
-            </div>
-            ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
-    } else if (msg.type === 'rule_proposal') {
-        el.classList.add('proposal-msg');
-        const meta = msg.metadata || {};
-        const ruleText = escapeHtml(meta.text || msg.text || '');
-        const color = getColor(msg.sender);
-        const status = meta.status || 'pending';
-        const isPending = status === 'pending';
-        el.innerHTML = `
-            <div class="proposal-card rule-proposal-card ${isPending ? '' : 'proposal-resolved'}">
-                <div class="proposal-header">
-                    <span class="proposal-pill rule-proposal-pill">Rule Proposal</span>
-                    <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
-                </div>
-                <div class="rule-proposal-text">${ruleText}</div>
-                ${isPending ? `
-                    <div class="proposal-actions">
-                        <button class="proposal-accept" onclick="resolveRuleProposal(${msg.id}, 'activate')">Activate</button>
-                        <button class="proposal-request-changes" onclick="resolveRuleProposal(${msg.id}, 'draft')">Add to drafts</button>
-                        <button class="proposal-dismiss" onclick="dismissRuleProposal(${msg.id})">Dismiss</button>
-                    </div>
-                ` : `
-                    <div class="proposal-status-resolved">${status === 'activated' ? 'Activated' : status === 'drafted' ? 'Added to drafts' : 'Dismissed'}</div>
-                `}
-            </div>
-            ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
-    } else if (window._messageRenderers && window._messageRenderers[msg.type]) {
-        window._messageRenderers[msg.type](el, msg);
-    } else if (msg.type === 'system' || msg.sender === 'system') {
-        el.classList.add('system-msg');
-        el.innerHTML = `<span class="msg-text">${escapeHtml(msg.text)}</span>`;
-    } else {
-        const isError = msg.text.startsWith('[') && msg.text.includes('error');
-        if (isError) el.classList.add('error-msg');
-
-        // Update last mentioned agent if message is from user (Ben)
-        if (msg.sender.toLowerCase() === username.toLowerCase()) {
-            const mentions = msg.text.match(/@(\w[\w-]*)/g);
-            if (mentions) {
-                const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
-                // Check against registered agents (agentConfig keys are name labels)
-                if (agentConfig[lastMention]) {
-                    _lastMentionedAgent = lastMention;
-                }
-            }
-        }
-
-        let textHtml = styleHashtags(renderMarkdown(msg.text));
-
-        const senderColor = getColor(msg.sender);
-        const isSelf = msg.sender.toLowerCase() === username.toLowerCase();
-        el.classList.add(isSelf ? 'self' : 'other');
-
-        let attachmentsHtml = '';
-        if (msg.attachments && msg.attachments.length > 0) {
-            attachmentsHtml = '<div class="msg-attachments">';
-            for (const att of msg.attachments) {
-                attachmentsHtml += `<img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" onclick="openImageModal('${escapeHtml(att.url)}')">`;
-            }
-            attachmentsHtml += '</div>';
-        }
-
-        const todoStatus = todos[msg.id] || null;
-
-        // Reply quote (if this message is a reply)
-        let replyHtml = '';
-        if (msg.reply_to !== undefined && msg.reply_to !== null) {
-            const parentEl = document.querySelector(`.message[data-id="${msg.reply_to}"]`);
-            if (parentEl) {
-                const parentSender = parentEl.querySelector('.msg-sender')?.textContent || '?';
-                const parentText = parentEl.dataset.rawText || parentEl.querySelector('.msg-text')?.textContent || '';
-                const truncated = parentText.length > 80 ? parentText.slice(0, 80) + '...' : parentText;
-                const parentColor = parentEl.querySelector('.msg-sender')?.style.color || 'var(--text-dim)';
-                replyHtml = `<div class="reply-quote" onclick="scrollToMessage(${msg.reply_to})"><span class="reply-sender" style="color: ${parentColor}">${escapeHtml(parentSender)}</span> ${escapeHtml(truncated)}</div>`;
-            }
-        }
-
-        const agentKey = (resolveAgent(msg.sender.toLowerCase()) || msg.sender).toLowerCase();
-        const hatSvg = agentHats[agentKey] || '';
-        const hatHtml = hatSvg ? `<div class="hat-overlay" data-agent="${escapeHtml(agentKey)}">${hatSvg}</div>` : '';
-        const avatarHtml = `<div class="avatar-wrap" data-agent="${escapeHtml(agentKey)}"><div class="avatar" style="background-color: ${senderColor}">${getAvatarSvg(msg.sender)}</div>${hatHtml}</div>`;
-
-        const statusLabel = todoStatusLabel(todoStatus);
-        el.dataset.rawText = msg.text;
-        const senderRole = _agentRoles[msg.sender] || '';
-        const roleClass = senderRole ? 'bubble-role has-role' : 'bubble-role';
-        const rolePillHtml = !isSelf ? `<button class="${roleClass}" onclick="showBubbleRolePicker(this, '${escapeHtml(msg.sender)}')" title="${senderRole ? escapeHtml(senderRole) : 'Set role'}">${senderRole || 'choose a role'}</button>` : '';
-        // Inline decision choices (if present)
-        let choicesHtml = '';
-        const meta = msg.metadata || {};
-        const choicesList = meta.choices || [];
-        if (msg.type === 'decision' && choicesList.length > 0) {
-            if (meta.resolved) {
-                choicesHtml = `<div class="decision-choices"><div class="decision-resolved">You chose: <strong>${escapeHtml(meta.chosen || '')}</strong></div></div>`;
-            } else {
-                choicesHtml = '<div class="decision-choices">' + choicesList.map(c =>
-                    `<button class="decision-choice" onclick="resolveDecision(${msg.id}, '${escapeHtml(c).replace(/'/g, "\\'")}')">${escapeHtml(c)}</button>`
-                ).join('') + '</div>';
-            }
-        }
-        el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>${rolePillHtml}<span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${choicesHtml}${attachmentsHtml}<button class="convert-job-pill" onclick="startJobFromMessage(${msg.id}); event.stopPropagation();" title="Convert to job">convert to job</button><button class="bubble-copy" onclick="copyMessage(${msg.id}, event)" title="Copy message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
-        if (todoStatus) el.classList.add('msg-todo', `msg-todo-${todoStatus}`);
-        if (msg.metadata?.session_output) el.classList.add('session-output');
-
-        // Add copy buttons to code blocks
-        addCodeCopyButtons(el);
-    }
+    // Dispatch to a renderer registered under msg.type (the seam sessions.js
+    // and jobs.js also use). A 'system'-sent message with no type-specific
+    // renderer falls back to the system card; everything else is a chat bubble.
+    let renderer = window._messageRenderers && window._messageRenderers[msg.type];
+    if (!renderer && msg.sender === 'system') renderer = window._messageRenderers['system'];
+    (renderer || _renderChat)(el, msg);
 
     // Hide messages from other channels
     if (msgChannel !== activeChannel) {
@@ -636,6 +498,165 @@ function appendMessage(msg) {
         unreadCount++;
         updateScrollAnchor();
     }
+}
+
+// --- Core message renderers -------------------------------------------------
+// appendMessage dispatches to window._messageRenderers[msg.type] -- the same
+// seam sessions.js / jobs.js register into. These are the built-in kinds; each
+// receives the pre-created <div.message> el and the msg and fills its markup.
+if (!window._messageRenderers) window._messageRenderers = {};
+
+window._messageRenderers['join'] = window._messageRenderers['leave'] = function (el, msg) {
+    el.classList.add('join-msg');
+    const color = getColor(msg.sender);
+    el.innerHTML = `<span class="join-dot" style="background: ${color}"></span><span class="join-text"><strong style="color: ${color}">${escapeHtml(msg.sender)}</strong> ${msg.type === 'join' ? 'joined' : 'left'}</span>`;
+};
+
+window._messageRenderers['summary'] = function (el, msg) {
+    el.classList.add('summary-msg');
+    const color = getColor(msg.sender);
+    el.innerHTML = `<div class="summary-card"><span class="summary-pill">Summary</span><span class="summary-author" style="color: ${color}">${escapeHtml(msg.sender)}</span><div class="summary-text">${escapeHtml(msg.text)}</div></div>`;
+};
+
+window._messageRenderers['job_proposal'] = function (el, msg) {
+    el.classList.add('proposal-msg');
+    const meta = msg.metadata || {};
+    const title = escapeHtml(meta.title || '');
+    const body = meta.body ? renderMarkdown(meta.body) : '';
+    const color = getColor(msg.sender);
+    const status = meta.status || 'pending';
+    const isPending = status === 'pending';
+    el.dataset.proposalTitle = meta.title || '';
+    el.dataset.proposalBody = meta.body || '';
+    el.dataset.proposalSender = msg.sender || '';
+    el.innerHTML = `
+        <div class="proposal-card ${isPending ? '' : 'proposal-resolved'}">
+            <div class="proposal-header">
+                <span class="proposal-pill">Job Proposal</span>
+                <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
+            </div>
+            <div class="proposal-title">${title}</div>
+            ${body ? `<div class="proposal-body">${body}</div>` : ''}
+            ${isPending ? `
+                <div class="proposal-actions">
+                    <button class="proposal-accept" onclick="acceptProposal(${msg.id})">Accept</button>
+                    <button class="proposal-request-changes" onclick="requestChangesProposal(${msg.id})">Request Changes</button>
+                    <button class="proposal-dismiss" onclick="dismissProposal(${msg.id})">Dismiss</button>
+                </div>
+            ` : `
+                <div class="proposal-status-resolved">${status === 'accepted' ? 'Accepted' : 'Dismissed'}</div>
+            `}
+        </div>
+        ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
+};
+
+window._messageRenderers['rule_proposal'] = function (el, msg) {
+    el.classList.add('proposal-msg');
+    const meta = msg.metadata || {};
+    const ruleText = escapeHtml(meta.text || msg.text || '');
+    const color = getColor(msg.sender);
+    const status = meta.status || 'pending';
+    const isPending = status === 'pending';
+    el.innerHTML = `
+        <div class="proposal-card rule-proposal-card ${isPending ? '' : 'proposal-resolved'}">
+            <div class="proposal-header">
+                <span class="proposal-pill rule-proposal-pill">Rule Proposal</span>
+                <span class="proposal-author" style="color: ${color}">${escapeHtml(msg.sender)}</span>
+            </div>
+            <div class="rule-proposal-text">${ruleText}</div>
+            ${isPending ? `
+                <div class="proposal-actions">
+                    <button class="proposal-accept" onclick="resolveRuleProposal(${msg.id}, 'activate')">Activate</button>
+                    <button class="proposal-request-changes" onclick="resolveRuleProposal(${msg.id}, 'draft')">Add to drafts</button>
+                    <button class="proposal-dismiss" onclick="dismissRuleProposal(${msg.id})">Dismiss</button>
+                </div>
+            ` : `
+                <div class="proposal-status-resolved">${status === 'activated' ? 'Activated' : status === 'drafted' ? 'Added to drafts' : 'Dismissed'}</div>
+            `}
+        </div>
+        ${!isPending ? `<div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>` : ''}`;
+};
+
+window._messageRenderers['system'] = function (el, msg) {
+    el.classList.add('system-msg');
+    el.innerHTML = `<span class="msg-text">${escapeHtml(msg.text)}</span>`;
+};
+
+function _renderChat(el, msg) {
+    const isError = msg.text.startsWith('[') && msg.text.includes('error');
+    if (isError) el.classList.add('error-msg');
+
+    // Update last mentioned agent if message is from user (Ben)
+    if (msg.sender.toLowerCase() === username.toLowerCase()) {
+        const mentions = msg.text.match(/@(\w[\w-]*)/g);
+        if (mentions) {
+            const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
+            // Check against registered agents (agentConfig keys are name labels)
+            if (agentConfig[lastMention]) {
+                _lastMentionedAgent = lastMention;
+            }
+        }
+    }
+
+    let textHtml = styleHashtags(renderMarkdown(msg.text));
+
+    const senderColor = getColor(msg.sender);
+    const isSelf = msg.sender.toLowerCase() === username.toLowerCase();
+    el.classList.add(isSelf ? 'self' : 'other');
+
+    let attachmentsHtml = '';
+    if (msg.attachments && msg.attachments.length > 0) {
+        attachmentsHtml = '<div class="msg-attachments">';
+        for (const att of msg.attachments) {
+            attachmentsHtml += `<img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" onclick="openImageModal('${escapeHtml(att.url)}')">`;
+        }
+        attachmentsHtml += '</div>';
+    }
+
+    const todoStatus = todos[msg.id] || null;
+
+    // Reply quote (if this message is a reply)
+    let replyHtml = '';
+    if (msg.reply_to !== undefined && msg.reply_to !== null) {
+        const parentEl = document.querySelector(`.message[data-id="${msg.reply_to}"]`);
+        if (parentEl) {
+            const parentSender = parentEl.querySelector('.msg-sender')?.textContent || '?';
+            const parentText = parentEl.dataset.rawText || parentEl.querySelector('.msg-text')?.textContent || '';
+            const truncated = parentText.length > 80 ? parentText.slice(0, 80) + '...' : parentText;
+            const parentColor = parentEl.querySelector('.msg-sender')?.style.color || 'var(--text-dim)';
+            replyHtml = `<div class="reply-quote" onclick="scrollToMessage(${msg.reply_to})"><span class="reply-sender" style="color: ${parentColor}">${escapeHtml(parentSender)}</span> ${escapeHtml(truncated)}</div>`;
+        }
+    }
+
+    const agentKey = (resolveAgent(msg.sender.toLowerCase()) || msg.sender).toLowerCase();
+    const hatSvg = agentHats[agentKey] || '';
+    const hatHtml = hatSvg ? `<div class="hat-overlay" data-agent="${escapeHtml(agentKey)}">${hatSvg}</div>` : '';
+    const avatarHtml = `<div class="avatar-wrap" data-agent="${escapeHtml(agentKey)}"><div class="avatar" style="background-color: ${senderColor}">${getAvatarSvg(msg.sender)}</div>${hatHtml}</div>`;
+
+    const statusLabel = todoStatusLabel(todoStatus);
+    el.dataset.rawText = msg.text;
+    const senderRole = _agentRoles[msg.sender] || '';
+    const roleClass = senderRole ? 'bubble-role has-role' : 'bubble-role';
+    const rolePillHtml = !isSelf ? `<button class="${roleClass}" onclick="showBubbleRolePicker(this, '${escapeHtml(msg.sender)}')" title="${senderRole ? escapeHtml(senderRole) : 'Set role'}">${senderRole || 'choose a role'}</button>` : '';
+    // Inline decision choices (if present)
+    let choicesHtml = '';
+    const meta = msg.metadata || {};
+    const choicesList = meta.choices || [];
+    if (msg.type === 'decision' && choicesList.length > 0) {
+        if (meta.resolved) {
+            choicesHtml = `<div class="decision-choices"><div class="decision-resolved">You chose: <strong>${escapeHtml(meta.chosen || '')}</strong></div></div>`;
+        } else {
+            choicesHtml = '<div class="decision-choices">' + choicesList.map(c =>
+                `<button class="decision-choice" onclick="resolveDecision(${msg.id}, '${escapeHtml(c).replace(/'/g, "\\'")}')">${escapeHtml(c)}</button>`
+            ).join('') + '</div>';
+        }
+    }
+    el.innerHTML = `<div class="todo-strip"></div>${isSelf ? '' : avatarHtml}<div class="chat-bubble" style="--bubble-color: ${senderColor}">${replyHtml}<div class="bubble-header"><span class="msg-sender" style="color: ${senderColor}">${escapeHtml(msg.sender)}</span>${rolePillHtml}<span class="msg-time">${msg.time || ''}</span></div><div class="msg-text">${textHtml}</div>${choicesHtml}${attachmentsHtml}<button class="convert-job-pill" onclick="startJobFromMessage(${msg.id}); event.stopPropagation();" title="Convert to job">convert to job</button><button class="bubble-copy" onclick="copyMessage(${msg.id}, event)" title="Copy message"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><div class="msg-actions"><button class="reply-btn" onclick="startReply(${msg.id}, event)">reply</button><button class="todo-hint" onclick="todoCycle(${msg.id}); event.stopPropagation();">${statusLabel}</button><button class="delete-btn" onclick="deleteClick(${msg.id}, event)" title="Delete">del</button></div>`;
+    if (todoStatus) el.classList.add('msg-todo', `msg-todo-${todoStatus}`);
+    if (msg.metadata?.session_output) el.classList.add('session-output');
+
+    // Add copy buttons to code blocks
+    addCodeCopyButtons(el);
 }
 
 function getSenderClass(sender) {
