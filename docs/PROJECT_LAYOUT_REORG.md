@@ -1,12 +1,24 @@
 # Project layout reorganization — plan
 
-Status: **Decided plan — every stage and item below carries an explicit
-`Decision (定案)` line. Nothing is left to owner decision.** The goal is
-folder-structure readability ("group what is related, name folders for their
-purpose") while preserving the run-from-source + wrapper-launch model exactly.
-Evaluated from a clean-architecture angle, scoped to **this branch only**
-(`refactor/arch-backlog`); the `rewrite/native-wrapper` Rust effort is **not**
-factored in. Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+Status: **DONE — all four stages executed, verified, and committed.** Every
+stage carried an explicit `Decision (定案)` line; nothing was left to owner
+decision. The goal was folder-structure readability ("group what is related,
+name folders for their purpose") while preserving the run-from-source +
+wrapper-launch model exactly. Evaluated from a clean-architecture angle, scoped
+to **this branch only** (`refactor/arch-backlog`); the `rewrite/native-wrapper`
+Rust effort was **not** factored in. Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+
+**Execution outcome (commits):** S1 `822fd4a` · S2 `70639ce` · S3 `9226e57` ·
+S4 `d4be9af`. Two refinements made during execution vs. the original plan:
+(1) S4 uses **absolute `agentchattr.*` imports uniformly** (including
+intra-subpackage), not relative-intra as first sketched — simpler to apply
+mechanically and equally clean. (2) S4 surfaced a `__file__`-anchored repo-root
+bug: `app.py` (session_templates dir), `config_loader.ROOT`, and
+`version_check._ROOT` each computed the root as `Path(__file__).parent`, which
+broke when the modules moved 2 levels deep — fixed to `parents[2]`. Final
+verification: 228 tests green, server boots (templates + config + 9 agents
+resolve), headless UI renders with zero static 404s, and a real codex agent
+registers + heartbeats through the refactored wrapper stack.
 
 ## 0. Scope and non-goals
 

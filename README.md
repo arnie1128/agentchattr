@@ -559,27 +559,30 @@ Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `
                                     └──────────────┘
 ```
 
-**Key files:**
+**Key files:** Library modules live under the `agentchattr/` package (subpackages
+`core`, `state`, `storage`, `session`, `mcp`, `server`, `wrapper`); the entry
+scripts (`run.py`, `wrapper.py`, `wrapper_api.py`, `build_release.py`) stay at the
+repo root.
 
 | File | Purpose |
 |------|---------|
 | `run.py` | Entry point — starts MCP + web server |
-| `app.py` | FastAPI WebSocket server, REST endpoints, registration API, security middleware |
-| `store.py` | JSONL message persistence with observer callbacks |
-| `registry.py` | Runtime agent registry — slot assignment, identity claims, rename tracking |
-| `jobs.py` | Job store — JSON persistence, status tracking, threaded conversations |
-| `rules.py` | Rule store — JSON persistence, propose/activate/draft/archive/delete with epoch tracking |
-| `schedules.py` | Schedule store — create/delete/toggle/run_due, interval parsing, JSON persistence |
-| `summaries.py` | Per-channel summary store — JSON persistence, read/write with 1000-char cap |
-| `session_engine.py` | Session orchestration — phase advancement, turn triggering, prompt assembly |
-| `session_store.py` | Session persistence — run state, template loading/validation, custom template storage |
+| `agentchattr/server/app.py` | FastAPI WebSocket server, REST endpoints, registration API, security middleware |
+| `agentchattr/storage/store.py` | JSONL message persistence with observer callbacks |
+| `agentchattr/server/registry.py` | Runtime agent registry — slot assignment, identity claims, rename tracking |
+| `agentchattr/storage/jobs.py` | Job store — JSON persistence, status tracking, threaded conversations |
+| `agentchattr/storage/rules.py` | Rule store — JSON persistence, propose/activate/draft/archive/delete with epoch tracking |
+| `agentchattr/storage/schedules.py` | Schedule store — create/delete/toggle/run_due, interval parsing, JSON persistence |
+| `agentchattr/storage/summaries.py` | Per-channel summary store — JSON persistence, read/write with 1000-char cap |
+| `agentchattr/session/session_engine.py` | Session orchestration — phase advancement, turn triggering, prompt assembly |
+| `agentchattr/session/session_store.py` | Session persistence — run state, template loading/validation, custom template storage |
 | `session_templates/` | Built-in session templates (JSON) — code review, debate, design critique, planning |
-| `router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
-| `agents.py` | Writes trigger queue files for wrapper to pick up |
-| `mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |
+| `agentchattr/server/router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
+| `agentchattr/server/agents.py` | Writes trigger queue files for wrapper to pick up |
+| `agentchattr/mcp/mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |
 | `wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
-| `wrapper_windows.py` | Windows: keystroke injection + screen buffer activity detection |
-| `wrapper_unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
+| `agentchattr/wrapper/windows.py` | Windows: keystroke injection + screen buffer activity detection |
+| `agentchattr/wrapper/unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
 | `config.toml` | All configuration (agents, ports, routing) |
 | `launchers/windows/start_*_yolo/bypass.bat` | Auto-approve launchers (Windows) |
 | `launchers/macos-linux/start_*_yolo/bypass.sh` | Auto-approve launchers (Mac/Linux) |
@@ -597,8 +600,8 @@ Python package dependencies (`fastapi`, `uvicorn`, `mcp`) are listed in `require
 
 Auto-trigger works on all platforms:
 
-- **Windows** — `wrapper_windows.py` injects keystrokes into the agent's console via Win32 `WriteConsoleInput`. The agent runs as a direct subprocess.
-- **Mac/Linux** — `wrapper_unix.py` runs the agent inside a project-scoped `tmux` session and injects keystrokes via `tmux send-keys`. Detach with `Ctrl+B, D` to leave the agent running in the background; use the wrapper's printed `tmux attach -t ...` command to reattach.
+- **Windows** — `agentchattr/wrapper/windows.py` injects keystrokes into the agent's console via Win32 `WriteConsoleInput`. The agent runs as a direct subprocess.
+- **Mac/Linux** — `agentchattr/wrapper/unix.py` runs the agent inside a project-scoped `tmux` session and injects keystrokes via `tmux send-keys`. Detach with `Ctrl+B, D` to leave the agent running in the background; use the wrapper's printed `tmux attach -t ...` command to reattach.
 
 The chat server and web UI are fully cross-platform (Python + browser).
 
