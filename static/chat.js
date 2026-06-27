@@ -46,8 +46,8 @@ Object.defineProperty(window, 'soundEnabled', { get() { return soundEnabled; } }
 Object.defineProperty(window, 'rules', { get() { return rules; }, set(v) { rules = v; } });
 Object.defineProperty(window, 'autoScroll', { get() { return autoScroll; } });
 Object.defineProperty(window, '_lastMentionedAgent', {
-    get() { return _lastMentionedAgent; },
-    set(v) { _lastMentionedAgent = v; },
+    get() { return Store.get('_lastMentionedAgent'); },
+    set(v) { Store.set('_lastMentionedAgent', v); },
 });
 
 // --- Drag-scroll for overflow containers ---
@@ -594,7 +594,7 @@ function _renderChat(el, msg) {
             const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
             // Check against registered agents (agentConfig keys are name labels)
             if (agentConfig[lastMention]) {
-                _lastMentionedAgent = lastMention;
+                Store.set('_lastMentionedAgent', lastMention);
             }
         }
     }
@@ -2032,11 +2032,11 @@ function updateMentionMenu() {
     mentionMenuVisible = true;
 }
 
-let _lastMentionedAgent = ''; // track most recent mention for auto-assignment
+Store.set('_lastMentionedAgent', ''); // track most recent mention for auto-assignment (single owner is Store, FE-3)
 
 function selectMention(name) {
     const input = document.getElementById('input');
-    _lastMentionedAgent = name; // remember for auto-assigning jobs
+    Store.set('_lastMentionedAgent', name); // remember for auto-assigning jobs
     const text = input.value;
     const cursor = input.selectionStart;
     // Replace from @ to cursor with @name + space
