@@ -25,7 +25,7 @@ function playNotificationSound(sender) {
     const soundName = soundPrefs[key] || soundPrefs['default'] || DEFAULT_SOUND;
     if (soundName === 'none') return;
     if (!soundCache[soundName]) {
-        soundCache[soundName] = new Audio(`/static/sounds/${soundName}.mp3`);
+        soundCache[soundName] = new Audio(`/static/assets/sounds/${soundName}.mp3`);
     }
     const audio = soundCache[soundName];
     audio.currentTime = 0;
@@ -36,7 +36,7 @@ function playCrossChannelSound() {
     const soundName = soundPrefs['cross-channel'] || CROSS_CHANNEL_SOUND;
     if (soundName === 'none') return;
     if (!soundCache[soundName]) {
-        soundCache[soundName] = new Audio(`/static/sounds/${soundName}.mp3`);
+        soundCache[soundName] = new Audio(`/static/assets/sounds/${soundName}.mp3`);
     }
     const audio = soundCache[soundName];
     audio.currentTime = 0;
@@ -85,7 +85,7 @@ function buildSoundSettings() {
             soundPrefs[name] = val;
             localStorage.setItem('agentchattr-sounds', JSON.stringify(soundPrefs));
             if (val && val !== 'none') {
-                if (!soundCache[val]) soundCache[val] = new Audio(`/static/sounds/${val}.mp3`);
+                if (!soundCache[val]) soundCache[val] = new Audio(`/static/assets/sounds/${val}.mp3`);
                 soundCache[val].currentTime = 0;
                 soundCache[val].play().catch(() => {});
             }

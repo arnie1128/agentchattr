@@ -1,4 +1,4 @@
-# <img src="static/logo.png" alt="" width="32"> agentchattr
+# <img src="static/assets/logo.png" alt="" width="32"> agentchattr
 
 ![Windows](https://img.shields.io/badge/platform-Windows-blue) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey) ![Linux](https://img.shields.io/badge/platform-Linux-orange) ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-green) [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/qzfn5YTT9a)
 
