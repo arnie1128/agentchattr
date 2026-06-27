@@ -61,7 +61,7 @@ def main():
     from src.core.config_loader import apply_cli_overrides, load_config
     apply_cli_overrides()
 
-    config_path = ROOT / "config.toml"
+    config_path = ROOT / "config" / "config.toml"
     if not config_path.exists():
         print(f"Error: {config_path} not found")
         sys.exit(1)

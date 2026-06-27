@@ -123,12 +123,12 @@ def load_config(root: Path | None = None) -> dict:
     (see module docstring for the list).
     """
     root = root or ROOT
-    config_path = root / "config.toml"
+    config_path = root / "config" / "config.toml"
 
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
 
-    local_path = root / "config.local.toml"
+    local_path = root / "config" / "config.local.toml"
     if local_path.exists():
         with open(local_path, "rb") as f:
             local = tomllib.load(f)

@@ -21,8 +21,6 @@ INCLUDE_FILES = [
     "wrapper.py",
     "wrapper_api.py",
     "open_chat.html",
-    "config.toml",
-    "config.local.toml.example",
     "requirements.txt",
     "README.md",
     "LICENSE",
@@ -31,6 +29,7 @@ INCLUDE_FILES = [
 
 INCLUDE_DIRS = [
     "src",
+    "config",
     "static",
     "assets",
     "launchers",

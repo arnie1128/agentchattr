@@ -485,7 +485,7 @@ Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM 
 
 1. Copy the example config:
    ```bash
-   cp config.local.toml.example config.local.toml
+   cp config/config.local.toml.example config/config.local.toml
    ```
 
 2. Edit `config.local.toml` with your model's endpoint:

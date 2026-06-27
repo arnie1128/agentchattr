@@ -48,7 +48,7 @@ def main():
     if not api_agents:
         print("  No API agents found in config.\n")
         print("  To add one, copy the example config:")
-        print("    cp config.local.toml.example config.local.toml")
+        print("    cp config/config.local.toml.example config/config.local.toml")
         print("  Then uncomment and edit an [agents.NAME] section (set type = \"api\").")
         print("  Finally: python wrapper_api.py <name>")
         sys.exit(1)
