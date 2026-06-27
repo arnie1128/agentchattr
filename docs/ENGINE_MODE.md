@@ -1,111 +1,76 @@
-# Engine mode — plan (finalized)
+# Engine mode — design
 
-Status: **DONE — all stages executed, verified, committed.** Reframe agentchattr
-as an **engine** that runs chat-room **instances**. Every chat room — external
-projects *and this repo itself* — launches from its own `.agentchattr/` instance
-via one **stable public entry**, so the engine's internals can reorganize without
-breaking any existing instance. Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+agentchattr is an **engine** that runs chat-room **instances**. Every chat room —
+external projects *and this repo itself* — launches from its own `.agentchattr/`
+instance through one **stable public entry**, so the engine's internals can
+reorganize without breaking any existing instance.
 
-**Execution outcome (commits):** R1 `e548210` (instance-template) · R2 `3394fd6`
-(config/) · R3 `f738584` (bin/ + tools/) · R4 `34cb04f` (launch.cmd/sh) · R5
-`1864499` (self-instance) · R6 `db3b5ff` (README reframe). R7 re-synced
-`cocos_cs_349/.agentchattr/` (a separate, gitignored repo): its thin wrappers now
-call `launch.cmd`, its `config.toml` (root/port 8401/cwd) preserved, and it
-resolves to this engine — future-proof against engine-internal moves. Final
-verification: 228 tests green; `bin/run.py` boots (config/ + 9 agents + 4
-presets); a real codex agent registers + heartbeats through the repo's own
-`.agentchattr/` self-instance (cwd = repo root); `tools/build_release.py` builds
-a zip carrying the new layout (`bin/`, `src/`, `config/`, `launch.cmd`).
-
-## 0. Model — engine vs instance
+## Engine vs instance
 
 **Engine = the reusable runtime (this repo).**
-- `src/` — server + wrapper code
-- `bin/` — runtime entry scripts (`run.py`, `wrapper.py`, `wrapper_api.py`)
-- `launchers/` — OS launch scripts (engine-internal)
-- `launch.cmd` / `launch.sh` — **the single stable public launch entry**
-- `config/` — engine default config (agent roster + global defaults)
-- `static/` · `assets/` · `session-presets/` — engine assets
-- `instance-template/` — template you copy to create a new instance
-- `tools/` — dev tooling (`build_release.py`)
 
-**Instance = one chat room's config (a `.agentchattr/` folder).** Inside the
-consuming project — *and this repo has its own*:
-- `config.toml` — overrides only: `root` (→engine), ports, `data_dir`, agent
-  `cwd`. Does **not** define agents.
+- `src/` — server + wrapper code (internal package; absolute `src.*` imports).
+- `bin/` — runtime entry scripts (`run.py`, `wrapper.py`, `wrapper_api.py`).
+- `launchers/` — OS launch scripts, engine-internal (`windows/`, `macos-linux/`).
+- `launch.cmd` / `launch.sh` — **the single stable public launch entry**.
+- `config/` — engine default config (`config.toml`: agent roster + global defaults).
+- `static/` · `assets/` · `session-presets/` — engine assets.
+- `instance-template/` — the template you copy to create a new instance.
+- `tools/` — dev tooling (`build_release.py`).
+
+**Instance = one chat room's config (a `.agentchattr/` folder).** It lives inside
+the consuming project — and this repo carries its own at `./.agentchattr/`.
+
+- `config.toml` — overrides only: `root` (→ engine), ports, `data_dir`, agent
+  `cwd`. It does **not** define agents; the roster comes from the engine's
+  `config/config.toml`.
 - thin wrappers + `_load.{py,sh}`. The thin wrappers call **only**
   `$AGENTCHATTR_ROOT/launch.<ext> <target>` — never an engine-internal path.
 
-## 1. The stable launch contract (why this plan exists)
+## The stable launch contract
 
-A real external instance (`cocos_cs_349/.agentchattr/`) broke when S2 moved
-`windows/` → `launchers/windows/`: its thin wrappers hard-code
-`$ROOT\windows\start_<agent>.bat`, an engine-**internal** path. **Lesson: an
-instance must reference only a stable public entry.** Engine mode introduces
-`launch.{cmd,sh}` as that entry; instances call `launch.<ext> <target>`; the
-engine reorganizes internals freely behind it.
+An instance references exactly one engine entry: `launch.<ext> <target> [args]`,
+where `<target>` is:
 
-## 2. Files that stay at repo root (and why — not just convention)
+- `open` — open the browser at `http://127.0.0.1:${AGENTCHATTR_PORT:-8300}`
+  (instance-port aware).
+- `server` (or empty) — start the server via `launchers/<os>/start.<bat|sh>`.
+- `<agent>` — launch an agent via `launchers/<os>/start_<agent>.<bat|sh>`.
+
+`launch.cmd` (Windows) / `launch.sh` (macOS/Linux) self-locate the engine root and
+dispatch internally. Because an instance never names an engine-internal path,
+reorganizing `launchers/` — or anything else behind `launch.*` — cannot break it.
+
+**Why this exists.** A real external instance once broke when the launchers moved
+from `windows/` to `launchers/windows/`: its thin wrappers hard-coded
+`$ROOT\windows\start_<agent>.bat`, an engine-internal path. The stable contract
+removes that coupling — the engine reorganizes internals freely behind `launch.*`,
+and the instance only ever calls `launch.<ext> <target>`.
+
+## Files that stay at repo root
+
+"Clean root" means no scattered *implementation* files — not an empty root. These
+belong at root for a concrete reason, not mere convention:
 
 - `README.md` — GitHub renders it from root.
-- `LICENSE` — **MIT, © Ben Curtis (upstream).** MIT requires the notice be kept
-  "in all copies"; removing it on this fork **breaches the license** and voids
-  the external-use model legally. Mandatory.
-- `requirements.txt` — the **only** dependency manifest (no pyproject). The
-  launchers `pip install -r requirements.txt`; removing it breaks venv setup →
-  `python bin/run.py` ImportErrors. Functionally mandatory. Keep the name —
-  Dependabot / dependency-graph / IDE / CI key on the literal `requirements.txt`.
-- `VERSION` — engine version metadata (read by `tools/build_release.py` +
-  `src/core/version_check.py`); conventional at root. Stays.
-- `launch.cmd` / `launch.sh` — the public launch entry; belongs at root.
+- `LICENSE` — MIT, © Ben Curtis (upstream). MIT requires the notice be kept "in
+  all copies"; removing it on this fork would breach the license. Mandatory.
+- `requirements.txt` — the only dependency manifest (no `pyproject.toml`). The
+  launchers run `pip install -r requirements.txt`; the literal name is fixed
+  (Dependabot / dependency-graph / IDE / CI key on it). Functionally mandatory.
+- `VERSION` — engine version metadata (read by `tools/build_release.py` and
+  `src/core/version_check.py`).
+- `launch.cmd` / `launch.sh` — the public launch entry.
 
-"Clean root" means no scattered *implementation* files — not an empty root.
+## ROOT resolution
 
-## 3. Decisions summary
+- Modules under `src/` two levels deep resolve the repo root via
+  `Path(__file__).resolve().parents[2]`.
+- Entry scripts in `bin/` use `Path(__file__).resolve().parent.parent` and
+  `sys.path.insert(0, str(ROOT))` before importing `src.*`.
 
-| # | Stage | Decision (定案) |
-|---|---|---|
-| R1 | `project-template/` → `instance-template/` | Rename + all refs. |
-| R2 | Engine config → `config/` | `config.toml` + `config.local.toml.example` → `config/`; `config_loader`, `run.py`, `.gitignore`, `build_release`, README. |
-| R3 | Entries → `bin/`, dev tool → `tools/` | `run/wrapper/wrapper_api.py` → `bin/`; `build_release.py` → `tools/`; fix each entry's `ROOT` (parent→parent.parent); launchers' `python run.py`→`python bin\run.py` etc.; manifest + README. |
-| R4 | Stable launch contract | Add `launch.{cmd,sh}` (targets: `open` \| `server` \| `<agent>`); `instance-template/` thin wrappers call `$ROOT/launch.<ext> <target>`; delete `open_chat.html` (folded into `launch … open`, instance-port aware). |
-| R5 | Repo self-instance `.agentchattr/` | Copy `instance-template/` → repo `.agentchattr/`; `root=".."`, `cwd=".."`, ports `8300/8200/8201`. Commit. Dogfood-verify codex joins via it. |
-| R6 | Docs reframe | README leads with `.agentchattr/` + `launch.*`; engine/instance model; disambiguate `config/config.toml` (engine) vs `.agentchattr/config.toml` (instance). |
-| R7 | Re-sync `cocos_cs_349/.agentchattr/` | Re-copy thin wrappers from the new `instance-template/` (now calling `launch.<ext>`); keep its `config.toml` (root/ports/cwd). |
+---
 
-Order **R1→R2→R3→R4→R5→R6→R7**; one commit per stage; invariant gate before
-each.
-
-## 4. Invariants (verification contract)
-
-- `python bin/run.py` boots (reads `config/config.toml`); 228 tests green.
-- Direct launchers still work; `launch.<ext> <agent>` works.
-- Repo's own chat launches via `.agentchattr/` and a real codex agent registers
-  + heartbeats (dogfood) — the same flow an external instance uses.
-- After R7, `cocos_cs_349/.agentchattr/` references only `launch.<ext>` (no dead
-  engine-internal path).
-
-## 5. `launch.cmd` / `launch.sh` contract
-
-`launch.<ext> <target> [args]`:
-- `open` → open the browser at `http://127.0.0.1:${AGENTCHATTR_PORT:-8300}`
-  (replaces `open_chat.html`; now instance-port aware).
-- `server` (or empty) → `launchers/<os>/start.<bat|sh>`.
-- `<agent>` → `launchers/<os>/start_<agent>.<bat|sh>`.
-
-Engine-internal launcher reorganization only ever touches `launch.*`; instances
-are insulated.
-
-## 6. Risk register
-
-| Risk | Stage | Mitigation |
-|---|---|---|
-| `config_loader` still reads root `config.toml` | R2 | boot resolves 9 agents from `config/`; tests. |
-| entry `ROOT` wrong after `bin/` move → `import src` fails | R3 | `python bin/run.py` boot + import smoke + tests. |
-| `launch.*` mis-dispatches / arg passing | R4 | run `launch server` + `launch codex` live. |
-| self-instance `root`/`cwd` anchor wrong | R5 | dogfood: codex registers + heartbeats. |
-| cocos still points at a dead path | R7 | grep cocos for engine-internal paths = none; only `launch.<ext>`. |
-
-Each stage is an isolated commit on `refactor/arch-backlog` (pushed to origin);
-revert a single stage if its gate fails. `cocos_cs_349` is a separate repo —
-its `.agentchattr/` is re-synced last, after the engine side is green.
+The folder reorganization and the Python architecture refactor that produced this
+layout are recorded in git history (branch `refactor/arch-backlog`). Standing and
+deferred architecture decisions are in [`DECISIONS.md`](DECISIONS.md).

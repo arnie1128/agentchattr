@@ -1,7 +1,8 @@
 # Fork remotes
 
 本 repo 是 `agentchattr` 的個人 fork，本地設定了三個 remote，用途各異。
-專案 root 的 `README.md` 是 upstream 原作版本，本文件補充 fork 自己的 remote 配置。
+專案 root 的 `README.md` 已包含本 fork 的修改（引擎／實例架構、目錄重組），
+不再等同 upstream 原作版本；本文件補充 fork 自己的 remote 配置。
 
 ## 三個 remote
 
