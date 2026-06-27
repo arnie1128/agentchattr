@@ -22,9 +22,10 @@ from schedules import ScheduleStore, parse_schedule_spec
 from router import Router
 from agents import AgentTrigger
 from registry import RuntimeRegistry
-from session_store import SessionStore, validate_session_template
+from session_store import SessionStore
 from session_engine import SessionEngine
 
+import commands
 import mcp_state
 import settings_store
 from app_state import state
@@ -513,42 +514,18 @@ def _on_session_change(action: str, session: dict):
     asyncio.run_coroutine_threadsafe(broadcast_session(action, session), _event_loop)
 
 
-_draft_ref_re = _re.compile(r'\[([a-f0-9]{8})\]')
-
-def _resolve_draft_lineage(text: str, channel: str) -> tuple[str, int]:
-    """Check if a session draft block is a revision of an existing draft.
-
-    Looks at the agent's own message text for a [draft_id] reference, and also
-    scans recent channel messages for "revise session draft [XXXX]" requests.
-    Returns (draft_id, revision). New drafts get a fresh id and revision=1.
-    """
-    # Check the message text itself for a draft_id reference
-    ref_match = _draft_ref_re.search(text)
-    ref_id = ref_match.group(1) if ref_match else None
-
-    if not ref_id:
-        # Also check recent messages for a "revise session draft [XXXX]" request
-        recent = state.store.get_recent(count=20, channel=channel)
-        for m in reversed(recent):
-            m_text = m.get("text", "")
-            if "revise session draft" in m_text.lower():
-                ref_match = _draft_ref_re.search(m_text)
-                if ref_match:
-                    ref_id = ref_match.group(1)
-                    break
-
-    if ref_id:
-        # Find the highest revision for this draft_id in existing messages
-        max_rev = 0
-        recent = state.store.get_recent(count=100, channel=channel)
-        for m in recent:
-            meta = m.get("metadata") or {}
-            if meta.get("draft_id") == ref_id:
-                max_rev = max(max_rev, meta.get("revision", 1))
-        if max_rev > 0:
-            return ref_id, max_rev + 1
-
-    return str(uuid.uuid4())[:8], 1
+def _agent_colors(agent_names: list[str]) -> dict[str, str]:
+    """Map each agent name to its avatar hex color — registered instance color,
+    else the configured base color, else a neutral default. Used by /hatmaking."""
+    instances = state.registry.get_all() if state.registry else {}
+    agents_cfg = state.config.get("agents", {})
+    colors = {}
+    for a in agent_names:
+        if a in instances:
+            colors[a] = instances[a].get("color", "#888")
+        else:
+            colors[a] = agents_cfg.get(a, {}).get("color", "#888")
+    return colors
 
 
 def _resolve_targets(raw_targets: list[str]) -> list[str]:
@@ -594,17 +571,16 @@ async def _handle_new_message(msg: dict):
         _last_active_channel = channel
     # Strip @mentions to find the slash command (e.g. "@claude @codex /hatmaking")
     stripped = _re.sub(r"@[\w-]+\s*", "", text).strip().lower()
-    _broadcast_cmds = ("/hatmaking", "/artchallenge", "/roastreview", "/poetry")
     cmd_word = stripped.split()[0] if stripped else ""
-    is_broadcast_cmd = cmd_word in _broadcast_cmds
+    is_broadcast_cmd = commands.is_macro(cmd_word)
     known_agents = set(state.registry.get_all_names()) if state.registry else set()
     known_agents.update(state.config.get("agents", {}).keys())
-    _session_draft_re = _re.compile(r'```session\s*\n(.*?)\n```', _re.DOTALL)
-    draft_match = _session_draft_re.search(text)
-    is_agent_session_draft = bool(draft_match and sender in known_agents)
+    sender_is_agent = sender in known_agents
+    is_agent_session_draft = sender_is_agent and bool(
+        state.session_engine and state.session_engine.has_draft_block(text))
     is_hidden_session_request = msg_type == "session_request"
 
-    is_agent_continue = (stripped == "/continue" and sender in known_agents)
+    is_agent_continue = (stripped == "/continue" and sender_is_agent)
     suppress_broadcast = (
         is_broadcast_cmd
         or is_hidden_session_request
@@ -634,105 +610,22 @@ async def _handle_new_message(msg: dict):
         await broadcast_status()
         return
 
-    if stripped == "/roastreview":
-        agent_names = state.registry.get_all_names() if state.registry else list(state.config.get("agents", {}).keys())
-        mentions = " ".join(f"@{a}" for a in agent_names)
-        state.store.add(sender, f"{mentions} Time for a roast review! Inspect each other's work and constructively roast it.", channel=channel)
+    # Broadcast macro commands (/hatmaking, /artchallenge, /roastreview,
+    # /poetry) expand into a prompt addressed to every agent, posted as the
+    # sender. Dispatch matches the raw-command suppression above (token-based).
+    if is_broadcast_cmd:
+        agent_names = (state.registry.get_all_names() if state.registry
+                       else list(state.config.get("agents", {}).keys()))
+        expanded = commands.expand(stripped, agent_names, _agent_colors(agent_names))
+        if expanded is not None:
+            state.store.add(sender, expanded, channel=channel)
         return
 
-    if stripped.startswith("/artchallenge"):
-        parts = stripped.split(None, 1)
-        theme = parts[1] if len(parts) > 1 else "anything you like"
-        agent_names = state.registry.get_all_names() if state.registry else list(state.config.get("agents", {}).keys())
-        mentions = " ".join(f"@{a}" for a in agent_names)
-        state.store.add(
-            sender,
-            f"{mentions} Art challenge! Create an SVG artwork with the theme: **{theme}**. "
-            "Write your SVG code to a .svg file, then attach it using chat_send(image_path=...). "
-            "Make it creative, keep it under 5KB. Let's see what you've got!",
-            channel=channel,
-        )
-        return
-
-    if stripped == "/hatmaking":
-        agent_names = state.registry.get_all_names() if state.registry else list(state.config.get("agents", {}).keys())
-        mentions = " ".join(f"@{a}" for a in agent_names)
-        all_instances = state.registry.get_all() if state.registry else {}
-        agents_cfg = state.config.get("agents", {})
-        color_parts = ", ".join(
-            f"{a}={all_instances[a]['color']}" if a in all_instances
-            else f"{a}={agents_cfg.get(a, {}).get('color', '#888')}"
-            for a in agent_names
-        )
-        state.store.add(
-            sender,
-            f"{mentions} Hat making time! Design a new hat for your avatar using SVG. "
-            "Use viewBox=\"0 0 32 16\" so it fits on top of a 32px avatar circle. "
-            f"Background is dark (#0f0f17). Avatar colors: {color_parts}. Design for good contrast! "
-            "Call chat_set_hat(sender=your_name, svg='<svg ...>...</svg>') to wear it. "
-            "Be creative — top hats, party hats, crowns, propeller beanies, whatever you want!",
-            channel=channel,
-        )
-        return
-
-    if stripped.startswith("/poetry"):
-        parts = stripped.split(None, 1)
-        form = parts[1] if len(parts) > 1 else "haiku"
-        if form not in ("haiku", "limerick", "sonnet"):
-            form = "haiku"
-        agent_names = state.registry.get_all_names() if state.registry else list(state.config.get("agents", {}).keys())
-        mentions = " ".join(f"@{a}" for a in agent_names)
-        prompts = {
-            "haiku": "Write a haiku about the current state of this codebase.",
-            "limerick": "Write a limerick about the current state of this codebase.",
-            "sonnet": "Write a sonnet about the current state of this codebase.",
-        }
-        state.store.add(sender, f"{mentions} {prompts[form]}", channel=channel)
-        return
-
-    # Detect session draft blocks from agents only.
-    # The session request prompt contains an example ```session block,
-    # so treating every non-system sender as a draft source creates a false
-    # invalid-draft card the moment the user asks for a custom session.
-    _session_draft_re = _re.compile(r'```session\s*\n(.*?)\n```', _re.DOTALL)
-    draft_match = _session_draft_re.search(text)
-    known_agents = set(state.registry.get_all_names()) if state.registry else set()
-    known_agents.update(state.config.get("agents", {}).keys())
-    if draft_match and sender in known_agents:
-        # Check if this is a revision of an existing draft
-        draft_id, revision = _resolve_draft_lineage(text, channel)
-
-        try:
-            draft_json = json.loads(draft_match.group(1))
-            errors = validate_session_template(draft_json)
-            if errors:
-                state.store.add(
-                    "system",
-                    f"Session draft from {sender} has errors:\n" + "\n".join(f"- {e}" for e in errors),
-                    msg_type="session_draft",
-                    channel=channel,
-                    metadata={"draft_id": draft_id, "revision": revision, "proposed_by": sender,
-                              "template": draft_json, "errors": errors, "valid": False},
-                )
-            else:
-                draft_json.setdefault("id", f"draft-{draft_id}")
-                state.store.add(
-                    "system",
-                    f"Session draft from {sender}: **{draft_json.get('name', '?')}**",
-                    msg_type="session_draft",
-                    channel=channel,
-                    metadata={"draft_id": draft_id, "revision": revision, "proposed_by": sender,
-                              "template": draft_json, "errors": [], "valid": True},
-                )
-        except json.JSONDecodeError:
-            state.store.add(
-                "system",
-                f"Session draft from {sender} contains invalid JSON.",
-                msg_type="session_draft",
-                channel=channel,
-                metadata={"draft_id": draft_id, "revision": revision, "proposed_by": sender,
-                           "errors": ["Invalid JSON in session block"], "valid": False},
-            )
+    # An agent may propose a session by posting a ```session ...``` block;
+    # session_engine validates it and posts a draft card (the example block in
+    # the request prompt, from a human, is ignored). Routing continues either way.
+    if state.session_engine:
+        state.session_engine.process_draft(text, sender, channel, sender_is_agent)
 
     targets = _resolve_targets(state.router.get_targets(sender, text, channel))
 
@@ -755,7 +648,6 @@ async def _handle_new_message(msg: dict):
     # Session turn guard: if a session is active on this channel and the sender
     # is an agent, only allow triggering the agent whose turn it is.
     # Human @mentions are always allowed (the session engine handles pausing).
-    sender_is_agent = sender in known_agents
     allowed_agent = state.session_engine.get_allowed_agent(channel) if state.session_engine and sender_is_agent else None
 
     for target in targets:
@@ -958,7 +850,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                     # Broadcast slash commands — expand without storing the raw command.
                     # _handle_new_message will store the expanded version.
-                    if cmd in ("/hatmaking", "/artchallenge", "/roastreview", "/poetry"):
+                    if cmd in commands.BROADCAST_COMMANDS:
                         await _handle_new_message({"sender": sender, "text": text, "channel": channel})
                         continue
 

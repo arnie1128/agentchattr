@@ -1,8 +1,13 @@
 """Session engine — orchestrates structured multi-agent sessions."""
 
+import json
 import logging
+import re
 import threading
 import time
+import uuid
+
+from session_store import validate_session_template
 
 log = logging.getLogger(__name__)
 
@@ -11,6 +16,11 @@ _DISSENT_LINE = "Provide your own independent analysis. Do not repeat or defer t
 
 # Roles that get the dissent mandate
 _DISSENT_ROLES = {"reviewer", "red_team", "critic", "challenger", "against"}
+
+# A fenced ```session ...``` block (the draft template an agent proposes), and
+# the [abcd1234] short-id reference used to thread draft revisions.
+_SESSION_DRAFT_RE = re.compile(r'```session\s*\n(.*?)\n```', re.DOTALL)
+_DRAFT_REF_RE = re.compile(r'\[([a-f0-9]{8})\]')
 
 
 class SessionEngine:
@@ -119,6 +129,98 @@ class SessionEngine:
                          session["id"], session.get("template_name", "?"),
                          session["current_phase"], session["current_turn"])
                 self._trigger_current(session)
+
+    # --- Session-draft proposals ---
+
+    def has_draft_block(self, text: str) -> bool:
+        """True if the text contains a fenced ```session ...``` block."""
+        return bool(_SESSION_DRAFT_RE.search(text))
+
+    def process_draft(self, text: str, sender: str, channel: str,
+                      is_known_agent: bool) -> bool:
+        """Detect a session draft from an agent, validate it, and post a card.
+
+        Returns True if a draft block was handled. Drafts are accepted only from
+        known agents: the session-request prompt itself contains an example
+        ```session block, so treating any sender as a draft source would post a
+        false "invalid draft" card the moment a human asks for a custom session.
+
+        Posting a card is a side effect; the caller continues routing the
+        original message afterwards (an agent's draft may also @mention others).
+        """
+        draft_match = _SESSION_DRAFT_RE.search(text)
+        if not draft_match or not is_known_agent:
+            return False
+
+        # Thread revisions: a draft referencing a prior [id] bumps its revision.
+        draft_id, revision = self._resolve_draft_lineage(text, channel)
+        base_meta = {"draft_id": draft_id, "revision": revision, "proposed_by": sender}
+
+        try:
+            draft_json = json.loads(draft_match.group(1))
+            errors = validate_session_template(draft_json)
+            if errors:
+                self._messages.add(
+                    "system",
+                    f"Session draft from {sender} has errors:\n" + "\n".join(f"- {e}" for e in errors),
+                    msg_type="session_draft",
+                    channel=channel,
+                    metadata={**base_meta, "template": draft_json, "errors": errors, "valid": False},
+                )
+            else:
+                draft_json.setdefault("id", f"draft-{draft_id}")
+                self._messages.add(
+                    "system",
+                    f"Session draft from {sender}: **{draft_json.get('name', '?')}**",
+                    msg_type="session_draft",
+                    channel=channel,
+                    metadata={**base_meta, "template": draft_json, "errors": [], "valid": True},
+                )
+        except json.JSONDecodeError:
+            self._messages.add(
+                "system",
+                f"Session draft from {sender} contains invalid JSON.",
+                msg_type="session_draft",
+                channel=channel,
+                metadata={**base_meta, "errors": ["Invalid JSON in session block"], "valid": False},
+            )
+        return True
+
+    def _resolve_draft_lineage(self, text: str, channel: str) -> tuple[str, int]:
+        """Check if a session draft block is a revision of an existing draft.
+
+        Looks at the agent's own message text for a [draft_id] reference, and
+        also scans recent channel messages for "revise session draft [XXXX]"
+        requests. Returns (draft_id, revision). New drafts get a fresh id and
+        revision=1.
+        """
+        # Check the message text itself for a draft_id reference
+        ref_match = _DRAFT_REF_RE.search(text)
+        ref_id = ref_match.group(1) if ref_match else None
+
+        if not ref_id:
+            # Also check recent messages for a "revise session draft [XXXX]" request
+            recent = self._messages.get_recent(count=20, channel=channel)
+            for m in reversed(recent):
+                m_text = m.get("text", "")
+                if "revise session draft" in m_text.lower():
+                    ref_match = _DRAFT_REF_RE.search(m_text)
+                    if ref_match:
+                        ref_id = ref_match.group(1)
+                        break
+
+        if ref_id:
+            # Find the highest revision for this draft_id in existing messages
+            max_rev = 0
+            recent = self._messages.get_recent(count=100, channel=channel)
+            for m in recent:
+                meta = m.get("metadata") or {}
+                if meta.get("draft_id") == ref_id:
+                    max_rev = max(max_rev, meta.get("revision", 1))
+            if max_rev > 0:
+                return ref_id, max_rev + 1
+
+        return str(uuid.uuid4())[:8], 1
 
     def _is_agent(self, name: str) -> bool:
         """Check if name belongs to a registered agent (not a human)."""

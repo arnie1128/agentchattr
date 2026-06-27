@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,9 +23,18 @@ class FakeMessages:
     def on_message(self, cb):
         self._cbs.append(cb)
 
-    def add(self, **kwargs):
+    def add(self, *args, **kwargs):
+        # Mirror MessageStore.add(sender, text, ...): accept the positional
+        # sender/text the engine passes for draft cards.
+        if args:
+            kwargs.setdefault("sender", args[0])
+            if len(args) > 1:
+                kwargs.setdefault("text", args[1])
         self.added.append(kwargs)
         return {"id": len(self.added)}
+
+    def get_recent(self, count=50, channel=None):
+        return list(self.added)
 
 
 class FakeTrigger:
@@ -112,6 +122,65 @@ class SessionAdvanceRaceTests(unittest.TestCase):
         # the source dict (what SessionStore persists) stays clean
         for field in ("total_phases", "phase_name", "current_role", "current_agent"):
             self.assertNotIn(field, session)
+
+
+class SessionDraftTests(unittest.TestCase):
+    """SRV-3: draft detect/validate/post moved from app.py into the engine."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store = SessionStore(os.path.join(self.tmp, "Sessions.json"))
+        self.messages = FakeMessages()
+        self.engine = SessionEngine(
+            self.store, self.messages, FakeTrigger(), FakeRegistry(["claude"])
+        )
+
+    @staticmethod
+    def _draft(body):
+        return "Here is my proposal:\n```session\n" + body + "\n```"
+
+    def test_non_agent_sender_is_ignored(self):
+        handled = self.engine.process_draft(
+            self._draft('{"name": "x"}'), "user", "general", is_known_agent=False)
+        self.assertFalse(handled)
+        self.assertEqual(self.messages.added, [])
+
+    def test_text_without_block_returns_false(self):
+        handled = self.engine.process_draft(
+            "just chatting", "claude", "general", is_known_agent=True)
+        self.assertFalse(handled)
+        self.assertEqual(self.messages.added, [])
+
+    def test_invalid_json_posts_invalid_card(self):
+        handled = self.engine.process_draft(
+            self._draft("{ not json"), "claude", "general", is_known_agent=True)
+        self.assertTrue(handled)
+        card = self.messages.added[-1]
+        self.assertEqual(card["msg_type"], "session_draft")
+        self.assertFalse(card["metadata"]["valid"])
+
+    def test_invalid_template_reports_errors(self):
+        handled = self.engine.process_draft(
+            self._draft('{"name": "x"}'), "claude", "general", is_known_agent=True)
+        self.assertTrue(handled)
+        card = self.messages.added[-1]
+        self.assertFalse(card["metadata"]["valid"])
+        self.assertTrue(card["metadata"]["errors"])
+
+    def test_valid_template_posts_valid_card(self):
+        body = json.dumps({
+            "name": "My Session",
+            "roles": ["a", "b"],
+            "phases": [{"name": "P1", "participants": ["a", "b"],
+                        "prompt": "go", "is_output": True}],
+        })
+        handled = self.engine.process_draft(
+            self._draft(body), "claude", "general", is_known_agent=True)
+        self.assertTrue(handled)
+        card = self.messages.added[-1]
+        self.assertTrue(card["metadata"]["valid"])
+        self.assertEqual(card["metadata"]["revision"], 1)
+        self.assertIn("My Session", card["text"])
 
 
 if __name__ == "__main__":
