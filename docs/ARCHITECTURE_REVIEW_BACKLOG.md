@@ -44,7 +44,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | WRAP-6 | P3 | **done (accept)** | `1121894` `resolve_path`; documented `_load.py` dup kept (bootstrap-ordering constraint), now protected by a drift-guard equivalence test |
 | NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
-| FE-2 | P2 | partial -> real-machine phase | `47a9895` `escapeHtml` extracted; the rest depends on FE-3 -> follows FE-3 into the real-machine phase (#78) |
+| FE-2 | P2 | **done (code) — RM-6 runtime verify pending** | `b5482b0`..`06c9329` (3 commits). colorOverrides + baseColors → Store; getColor/resolveAgent/getAvatarSvg (+BRAND_AVATARS/USER_AVATAR) → new `agentview.js` leaf. renderMarkdown kept in chat.js (state-coupled, not pure); agentHats not moved (unused by the helpers). Static-verified; load-order verify in RM-6 |
 | FE-3 | P2 | **done (code) — RM-6 runtime verify pending** | `33b91d7`..`2f1d411` (12 commits). All 7 keys (channelUnread/channelList/_lastMentionedAgent/soundEnabled/rules/username/agentConfig) migrated to Store as single owner; 4 siblings (channels/jobs/sessions/rules-panel) repointed to `Store.get`/`Store.set`; the 7 `window.*` bridges deleted. Static net: `node --check` × 10 + grep-completeness (0 bare refs in chat.js, 0 `window.<key>` across static/). `activeChannel` keeps its shim per the documented exception. Runtime UI verification folded into RM-6 (no JS behavior-test net) |
 | FE-4 | P3 | done | inbound `onmessage` → `Hub.emit` only (chat.js:379-384) |
 | FE-5 | P3 | done | `appendMessage` → `_messageRenderers` registry |
@@ -95,7 +95,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | WRAP-6 | Done (accept) | drift-guard test added; shared-leaf declined (bootstrap constraint) |
 | NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
-| FE-2 | Do (real-machine #78) | follows FE-3 |
+| FE-2 | **Done (code); RM-6 verify** | colorOverrides/baseColors→Store; agentview.js leaf; renderMarkdown stays |
 | FE-3 | **Done (code); RM-6 verify** | 12 commits; 7 keys → Store, 4 siblings repointed, 7 bridges dropped; static-verified, UI verify in RM-6 |
 | FE-4 | Done | onmessage -> Hub.emit |
 | FE-5 | Done | _messageRenderers registry |
@@ -405,8 +405,10 @@ Post-WRAP-1 residue: wrapper.py:93-105 keeps three one-line forwarders `_fetch_r
 
 Confirmed done. `api.js:12-52` centralizes the token header + JSON body; `wsClient.js:13-27` centralizes the `{type,...}` send shape. Proof: bare `fetch(` over static/*.js → 5, all in api.js; `ws.send(` / `.send(JSON.stringify` → wsClient only; no `XMLHttpRequest`/`sendBeacon`/extra `new WebSocket` send path. (Optional descoped residual: api.js returns a raw `Response`, so error-body parsing stays per-caller — not a blocker.)
 
-#### FE-2 — extract shared rendering primitives into leaf modules (P2, partial)
+#### FE-2 — extract shared rendering primitives into leaf modules (P2, done — RM-6 verify pending)
 **Decision (定案):** **Do, sequenced after FE-3.** Once the backing state lives in Store this is a clean physical move of getColor/resolveAgent/getAvatarSvg (+ renderMarkdown) into a leaf. The implicit-global hazard is already mitigated.
+
+**Status — DONE (code), `b5482b0`..`06c9329` (3 commits):** (1) `colorOverrides` → Store; (2) `baseColors` → Store (extending the FE-3 single-owner set, so the leaf reads from Store, per the "importing from Store" design); (3) `getColor`/`resolveAgent`/`getAvatarSvg` + `BRAND_AVATARS`/`USER_AVATAR` physically sliced out of chat.js into a new `agentview.js` leaf (script-based line-slice to keep the SVG literal byte-exact), `<script>` added after store.js, the 3 `window.*` exports moved to the leaf. chat.js's bare callers + line 984's `BRAND_AVATARS` resolve to the leaf's globals (classic-script shared global scope; agentview.js loads first). **Two deviations from the criterion below, both clean-arch corrections:** (a) **`renderMarkdown` stays in chat.js, NOT format.js** — it transitively depends on `colorMentions` (→getColor) and `linkifyPaths` (→serverPlatform), so it is a state-coupled render cluster, not a pure leaf; format.js's "dependency-free" contract would be violated. (b) **`agentHats` is NOT moved** — `getColor`/`getAvatarSvg`/`resolveAgent` never read it (it is message-render/hat state used only at chat.js 626/803/4028/4144), so it stays. **Verification:** `node --check` × 11 + grep (each of the 3 fns + 2 consts defined exactly once in agentview.js; 0 leftover in chat.js). The one runtime-only risk is agentview.js load order (a loud full-UI break if wrong, not a silent bug) → RM-6.
 
 Only `escapeHtml` is extracted (format.js:10-15). The other five still live in chat.js: `getAvatarSvg` (175), `renderMarkdown` (260), `appendMessage` (453), `resolveAgent` (672), `getColor` (682). The implicit-global hazard is now mitigated — these are explicitly `window`-bound (chat.js:723, 730-733) — so the old "IIFE would silently break siblings" rationale is stale. The physical move is blocked: `getColor`/`resolveAgent`/`getAvatarSvg` read live `agentConfig`/`colorOverrides`/`baseColors`/`agentHats` (chat.js `let` globals), so they wait on FE-3.
 - **Approach (方案):** after FE-3 moves agent/color state to Store, move `getColor`/`resolveAgent`/`getAvatarSvg` (~120 lines) into a leaf (e.g. `agentview.js`) importing from Store; `renderMarkdown` can move with `escapeHtml` into `format.js`; repoint the 4 window assignments. `appendMessage` stays (depends on many chat.js internals — FE-5/FE-6 territory).
