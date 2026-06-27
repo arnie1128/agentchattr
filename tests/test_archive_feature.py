@@ -229,20 +229,20 @@ class ImportExportApiTests(unittest.TestCase):
         # Don't seed — import target should be empty so imported records are new
 
         self._saved = {
-            "store": getattr(app, "store", None),
-            "jobs": getattr(app, "jobs", None),
-            "rules": getattr(app, "rules", None),
-            "summaries": getattr(app, "summaries", None),
-            "config": getattr(app, "config", None),
-            "room_settings": dict(getattr(app, "room_settings", {})),
+            "store": app.state.store,
+            "jobs": app.state.jobs,
+            "rules": app.state.rules,
+            "summaries": app.state.summaries,
+            "config": app.state.config,
+            "room_settings": dict(app.state.room_settings),
         }
 
-        app.store = self.store
-        app.jobs = self.jobs
-        app.rules = self.rules
-        app.summaries = self.summaries
-        app.config = {"server": {"data_dir": str(self.root / "appdata"), "version": "test"}}
-        app.room_settings = {
+        app.state.store = self.store
+        app.state.jobs = self.jobs
+        app.state.rules = self.rules
+        app.state.summaries = self.summaries
+        app.state.config = {"server": {"data_dir": str(self.root / "appdata"), "version": "test"}}
+        app.state.room_settings = {
             "title": "agentchattr",
             "username": "user",
             "font": "sans",
@@ -253,12 +253,12 @@ class ImportExportApiTests(unittest.TestCase):
         }
 
         def restore():
-            app.store = self._saved["store"]
-            app.jobs = self._saved["jobs"]
-            app.rules = self._saved["rules"]
-            app.summaries = self._saved["summaries"]
-            app.config = self._saved["config"]
-            app.room_settings = self._saved["room_settings"]
+            app.state.store = self._saved["store"]
+            app.state.jobs = self._saved["jobs"]
+            app.state.rules = self._saved["rules"]
+            app.state.summaries = self._saved["summaries"]
+            app.state.config = self._saved["config"]
+            app.state.room_settings = self._saved["room_settings"]
 
         self.addCleanup(restore)
 
@@ -293,7 +293,7 @@ class ImportExportApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.body.decode("utf-8"))
         self.assertTrue(payload["ok"])
-        self.assertIn("planning", app.room_settings["channels"])
+        self.assertIn("planning", app.state.room_settings["channels"])
         self.assertEqual(payload["sections"]["messages"]["created"], 2)
         self.assertEqual(payload["sections"]["jobs"]["created"], 1)
 

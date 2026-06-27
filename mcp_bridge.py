@@ -14,18 +14,12 @@ from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from app_state import state
+
 log = logging.getLogger(__name__)
 
-# Shared state — set by run.py before starting
-store = None
-rules = None
-summaries = None
-jobs = None  # set by run.py — JobStore instance
-room_settings = None  # set by run.py — dict with "channels" list etc.
-registry = None       # set by run.py — RuntimeRegistry instance
-config = None         # set by run.py — full config.toml dict
-router = None         # set by run.py — Router instance
-agents = None         # set by run.py — AgentManager instance
+# Shared store/rules/registry/router/… live on the `state` object from
+# app_state, populated by app.configure(). mcp_bridge imports the same object.
 _presence: dict[str, float] = {}
 _activity: dict[str, bool] = {}   # True = screen changed on last poll
 _activity_ts: dict[str, float] = {}  # timestamp of last active=True heartbeat
@@ -147,12 +141,12 @@ def _extract_agent_token(ctx: Context | None) -> str:
 
 
 def _authenticated_instance(ctx: Context | None) -> dict | None:
-    if not registry:
+    if not state.registry:
         return None
     token = _extract_agent_token(ctx)
     if not token:
         return None
-    return registry.resolve_token(token)
+    return state.registry.resolve_token(token)
 
 
 def _resolve_tool_identity(
@@ -178,11 +172,11 @@ def _resolve_tool_identity(
             return "", f"Error: {field_name} is required."
         return "", None
 
-    if registry:
-        resolved = registry.resolve_name(provided)
-        if resolved != provided and registry.is_registered(resolved):
+    if state.registry:
+        resolved = state.registry.resolve_name(provided)
+        if resolved != provided and state.registry.is_registered(resolved):
             provided = resolved
-        if registry.is_agent_family(provided):
+        if state.registry.is_agent_family(provided):
             return "", f"Error: authenticated agent session required for '{provided}'."
 
     if provided:
@@ -235,23 +229,23 @@ def chat_send(
     if not channel and not job_id:
         channel = "general"
     # Block pending instances (identity not yet confirmed)
-    if registry and registry.is_pending(sender):
+    if state.registry and state.registry.is_pending(sender):
         return "Error: identity not confirmed. Call chat_claim(sender=your_base_name) to get your identity."
     # Block base family names when multi-instance is active
     # (but allow if sender is a registered+active instance — e.g. slot-1 'claude' that already claimed)
-    if registry and sender in registry.get_bases() and registry.family_instance_count(sender) >= 2:
-        inst = registry.get_instance(sender)
+    if state.registry and sender in state.registry.get_bases() and state.registry.family_instance_count(sender) >= 2:
+        inst = state.registry.get_instance(sender)
         if not inst or inst.get("state") != "active":
             return (f"Error: multiple {sender} instances are registered. "
                     f"Call chat_claim(sender='{sender}') to get your unique identity, then use the confirmed_name as sender.")
     # Block unregistered agent names (stale identity from resumed session)
-    if registry and registry.is_agent_family(sender) and not registry.is_registered(sender):
+    if state.registry and state.registry.is_agent_family(sender) and not state.registry.is_registered(sender):
         return f"Error: sender '{sender}' is not registered. Call chat_claim(sender=your_base_name) to get your identity."
     if not message.strip() and not image_path:
         return "Empty message, not sent."
 
     # Job-scoped send: post into a job conversation instead of main timeline
-    if job_id and jobs:
+    if job_id and state.jobs:
         # Detect suggestion type from [suggestion] prefix
         text = message.strip()
         msg_type = "chat"
@@ -268,14 +262,14 @@ def chat_send(
             if src.suffix.lower() not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'):
                 return f"Unsupported image type: {src.suffix}"
             raw_dir = "./uploads"
-            if config and "images" in config:
-                raw_dir = config["images"].get("upload_dir", raw_dir)
+            if state.config and "images" in state.config:
+                raw_dir = state.config["images"].get("upload_dir", raw_dir)
             upload_dir = Path(raw_dir)
             upload_dir.mkdir(parents=True, exist_ok=True)
             filename = f"{uuid.uuid4().hex[:8]}{src.suffix}"
             shutil.copy2(str(src), str(upload_dir / filename))
             job_attachments = [{"name": src.name, "url": f"/uploads/{filename}"}]
-        msg = jobs.add_message(job_id, sender, text, msg_type=msg_type,
+        msg = state.jobs.add_message(job_id, sender, text, msg_type=msg_type,
                                attachments=job_attachments)
         if msg is None:
             return f"Error: job #{job_id} not found."
@@ -283,26 +277,26 @@ def chat_send(
             _presence[sender] = time.time()
 
         # Route @mentions in job messages to trigger other agents
-        if router and agents:
-            job = jobs.get(job_id)
+        if state.router and state.agents:
+            job = state.jobs.get(job_id)
             if job:
                 job_channel = job.get("channel", "general")
-                raw_targets = router.get_targets(sender, text, job_channel)
+                raw_targets = state.router.get_targets(sender, text, job_channel)
                 targets = []
                 for t in raw_targets:
-                    if registry:
-                        targets.extend(registry.resolve_to_instances(t))
+                    if state.registry:
+                        targets.extend(state.registry.resolve_to_instances(t))
                     else:
                         targets.append(t)
                 targets = list(dict.fromkeys(targets))
                 chat_msg = f"{sender}: {text}" if text else ""
                 for target in targets:
-                    if registry:
-                        inst = registry.get_instance(target)
+                    if state.registry:
+                        inst = state.registry.get_instance(target)
                         if inst and inst.get("state") == "pending":
                             continue
-                    if agents.is_available(target):
-                        agents.trigger_sync(target, message=chat_msg,
+                    if state.agents.is_available(target):
+                        state.agents.trigger_sync(target, message=chat_msg,
                                             channel=job_channel, job_id=job_id)
 
         return f"Sent to job #{job_id} (msg_id={msg['id']})" + (
@@ -321,8 +315,8 @@ def chat_send(
         
         # Get upload dir from config (fall back to ./uploads)
         raw_dir = "./uploads"
-        if config and "images" in config:
-            raw_dir = config["images"].get("upload_dir", raw_dir)
+        if state.config and "images" in state.config:
+            raw_dir = state.config["images"].get("upload_dir", raw_dir)
         upload_dir = Path(raw_dir)
         
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -331,7 +325,7 @@ def chat_send(
         attachments.append({"name": src.name, "url": f"/uploads/{filename}"})
 
     reply_id = reply_to if reply_to >= 0 else None
-    if reply_id is not None and store.get_by_id(reply_id) is None:
+    if reply_id is not None and state.store.get_by_id(reply_id) is None:
         return f"Message #{reply_to} not found."
 
     # Determine message type and metadata based on choices
@@ -342,7 +336,7 @@ def chat_send(
         msg_type = "decision"
         metadata = {"choices": clean_choices, "resolved": False}
 
-    msg = store.add(sender, message.strip(), attachments=attachments,
+    msg = state.store.add(sender, message.strip(), attachments=attachments,
                     reply_to=reply_id, channel=channel,
                     msg_type=msg_type, metadata=metadata)
     _update_cursor(sender, [msg], channel)
@@ -375,7 +369,7 @@ def chat_propose_job(
     title = title.strip()[:80]
     body = (body or "").strip()[:1000]
 
-    msg = store.add(
+    msg = state.store.add(
         sender, f"Job proposal: {title}",
         msg_type="job_proposal",
         channel=channel,
@@ -392,8 +386,8 @@ def _resolve_attachments(attachments: list[dict]) -> list[dict]:
     if not attachments:
         return attachments
     raw_dir = "./uploads"
-    if config and "images" in config:
-        raw_dir = config["images"].get("upload_dir", raw_dir)
+    if state.config and "images" in state.config:
+        raw_dir = state.config["images"].get("upload_dir", raw_dir)
     upload_dir = Path(raw_dir).resolve()
     resolved = []
     for att in attachments:
@@ -579,9 +573,9 @@ def chat_read(
         return err
 
     # Job-scoped read: return job metadata plus the thread messages
-    if job_id and jobs:
-        job = jobs.get(job_id)
-        msgs = jobs.get_messages(job_id)
+    if job_id and state.jobs:
+        job = state.jobs.get(job_id)
+        msgs = state.jobs.get_messages(job_id)
         if job is None or msgs is None:
             return f"Error: job #{job_id} not found."
         # Remember so chat_send defaults back to this job thread.
@@ -630,18 +624,18 @@ def chat_read(
             _last_read_channel[sender] = ch
             _last_read_job_id.pop(sender, None)
     if since_id:
-        msgs = store.get_since(since_id, channel=ch)
+        msgs = state.store.get_since(since_id, channel=ch)
     elif sender:
         ch_key = ch if ch else "__all__"
         with _cursors_lock:
             agent_cursors = _cursors.get(sender, {})
             cursor = agent_cursors.get(ch_key, 0)
         if cursor:
-            msgs = store.get_since(cursor, channel=ch)
+            msgs = state.store.get_since(cursor, channel=ch)
         else:
-            msgs = store.get_recent(limit, channel=ch)
+            msgs = state.store.get_recent(limit, channel=ch)
     else:
-        msgs = store.get_recent(limit, channel=ch)
+        msgs = state.store.get_recent(limit, channel=ch)
 
     msgs = msgs[-limit:]
     _update_cursor(sender, msgs, ch)
@@ -663,10 +657,10 @@ def chat_read(
         _empty_read_count[sender] = 0
 
     # Prepend identity breadcrumb if multi-instance
-    if sender and registry and registry.is_registered(sender):
-        multi = registry.family_instance_count(sender) >= 2
+    if sender and state.registry and state.registry.is_registered(sender):
+        multi = state.registry.family_instance_count(sender) >= 2
         if multi:
-            inst = registry.get_instance(sender)
+            inst = state.registry.get_instance(sender)
             if inst:
                 breadcrumb = f"[identity: {inst['name']} | label: {inst['label']}]"
                 serialized = f"{breadcrumb}\n{serialized}"
@@ -689,7 +683,7 @@ def chat_resync(
     if err:
         return err
     ch = channel if channel else None
-    msgs = store.get_recent(limit, channel=ch)
+    msgs = state.store.get_recent(limit, channel=ch)
     _update_cursor(sender, msgs, ch)
     serialized = _serialize_messages(msgs)
     return serialized
@@ -701,19 +695,19 @@ def chat_join(name: str, channel: str = "general", ctx: Context | None = None) -
     if err:
         return err
     # Block pending instances (identity not yet confirmed)
-    if registry and registry.is_pending(name):
+    if state.registry and state.registry.is_pending(name):
         return "Error: identity not confirmed. Call chat_claim(sender=your_base_name) to get your identity."
     # Block base family names when multi-instance is active
     # (but allow if name is a registered+active instance — e.g. slot-1 'claude' that already claimed)
-    if registry and name in registry.get_bases() and registry.family_instance_count(name) >= 2:
-        inst = registry.get_instance(name)
+    if state.registry and name in state.registry.get_bases() and state.registry.family_instance_count(name) >= 2:
+        inst = state.registry.get_instance(name)
         if not inst or inst.get("state") != "active":
             return (f"Error: multiple {name} instances registered. "
                     f"Call chat_claim(sender='{name}') to get your unique identity first.")
     # Block unregistered agent names (stale identity from resumed session)
-    if registry and registry.is_agent_family(name) and not registry.is_registered(name):
+    if state.registry and state.registry.is_agent_family(name) and not state.registry.is_registered(name):
         return f"Error: '{name}' is not registered. Call chat_claim(sender=your_base_name) to get your identity."
-    store.add(name, f"{name} is online", msg_type="join", channel="general")
+    state.store.add(name, f"{name} is online", msg_type="join", channel="general")
     online = _get_online()
     return f"Joined. Online: {', '.join(online)}"
 
@@ -785,7 +779,7 @@ def chat_rules(
     action = action.strip().lower()
 
     if action == "list":
-        active = rules.active_list()
+        active = state.rules.active_list()
         if not active["rules"]:
             return "No active rules."
         lines = [f"Active rules (epoch {active['epoch']}):"]
@@ -798,12 +792,12 @@ def chat_rules(
             return "Error: rule text is required."
         if not sender.strip():
             return "Error: sender is required."
-        result = rules.propose(rule, sender, reason)
+        result = state.rules.propose(rule, sender, reason)
         if result is None:
             return "Error: too many rules."
         # Add proposal card to chat timeline
-        if store:
-            store.add(
+        if state.store:
+            state.store.add(
                 sender, f"Rule proposal: {result['text']}",
                 msg_type="rule_proposal",
                 channel=channel or "general",
@@ -859,10 +853,10 @@ def chat_claim(sender: str, name: str = "", ctx: Context | None = None) -> str:
     sender, err = _resolve_tool_identity(sender, ctx, field_name="sender", required=True)
     if err:
         return err
-    if not registry:
+    if not state.registry:
         return "Error: registry not available."
     target = name.strip() if name.strip() else None
-    result = registry.claim(sender, target)
+    result = state.registry.claim(sender, target)
     if isinstance(result, str):
         return f"Error: {result}"
     # Touch presence with the CONFIRMED name (may differ from sender)
@@ -873,7 +867,7 @@ def chat_claim(sender: str, name: str = "", ctx: Context | None = None) -> str:
 
 def chat_channels() -> str:
     """List all available channels. Returns a JSON array of channel names."""
-    channels = room_settings.get("channels", ["general"]) if room_settings else ["general"]
+    channels = state.room_settings.get("channels", ["general"]) if state.room_settings else ["general"]
     return json.dumps(channels)
 
 
@@ -899,7 +893,7 @@ def chat_summary(
     channel = (channel or "general").strip()
 
     if action == "read":
-        entry = summaries.get(channel)
+        entry = state.summaries.get(channel)
         if not entry:
             return json.dumps({"channel": channel, "text": None, "message": f"No summary for #{channel} yet — one hasn't been written."})
         return json.dumps(entry, ensure_ascii=False)
@@ -911,16 +905,16 @@ def chat_summary(
             return "Error: summary too long (max 1000 characters)."
         # Get the latest message ID for staleness tracking
         latest_id = 0
-        if store:
-            recent = store.get_recent(1, channel=channel)
+        if state.store:
+            recent = state.store.get_recent(1, channel=channel)
             if recent:
                 latest_id = recent[-1]["id"]
-        result = summaries.write(channel, text, sender, message_id=latest_id)
+        result = state.summaries.write(channel, text, sender, message_id=latest_id)
         if result is None:
             return "Error: failed to write summary."
         # Post a visual summary message to the timeline
-        if store:
-            store.add(sender, text.strip(), msg_type="summary", channel=channel)
+        if state.store:
+            state.store.add(sender, text.strip(), msg_type="summary", channel=channel)
         return f"Summary for #{channel} updated ({len(text.strip())} chars)."
 
     return f"Unknown action: {action}. Valid actions: read, write."
@@ -947,9 +941,6 @@ def _create_server(port: int) -> FastMCP:
 
 mcp_http = _create_server(8200)  # streamable-http for Claude/Codex/Qwen
 mcp_sse = _create_server(8201)   # SSE for Gemini
-
-# Keep backward compat — run.py references mcp_bridge.store
-# (store is set by run.py before starting)
 
 
 def run_http_server():

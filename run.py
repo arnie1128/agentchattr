@@ -57,22 +57,12 @@ def main():
     # --- Security: generate a random session token (in-memory only) ---
     session_token = secrets.token_hex(32)
 
-    # Configure the FastAPI app (creates shared store)
-    from app import app, configure, set_event_loop, store as _store_ref
+    # Configure the FastAPI app (populates the shared app_state.state object)
+    from app import app, configure, set_event_loop
     configure(config, session_token=session_token)
 
-    # Share stores with the MCP bridge
-    from app import store, rules, summaries, jobs, room_settings, registry, router as app_router, agents as app_agents, session_engine, session_store
+    # mcp_bridge reads the same app_state.state object — no re-export needed.
     import mcp_bridge
-    mcp_bridge.store = store
-    mcp_bridge.rules = rules
-    mcp_bridge.summaries = summaries
-    mcp_bridge.jobs = jobs
-    mcp_bridge.room_settings = room_settings
-    mcp_bridge.registry = registry
-    mcp_bridge.config = config
-    mcp_bridge.router = app_router
-    mcp_bridge.agents = app_agents
 
     # Enable cursor and role persistence across restarts
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
