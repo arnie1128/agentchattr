@@ -93,11 +93,14 @@ class JobStore:
 
     def list_all(self, channel: str | None = None,
                  status: str | None = None) -> list[dict]:
-        """List jobs, optionally filtered by channel and/or status."""
+        """List jobs, optionally filtered by channel and/or status.
+
+        A pure read (NEW-STATE-PERSIST-2): the sort-order backfill runs once at
+        _load() for legacy files, and every insert path (create — used by
+        archive import too) assigns a sort_order, so no in-read backfill or disk
+        write is needed.
+        """
         with self._lock:
-            changed = self._ensure_sort_orders_locked()
-            if changed:
-                self._save()
             result = list(self._jobs)
         if channel:
             result = [a for a in result if a.get("channel") == channel]

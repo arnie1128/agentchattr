@@ -30,7 +30,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | STATE-6 | P3 | done | `037695e` `routing_paused` rename + single `_rewrite` |
 | STATE-7 | P3 | deferred | **DECISION: defer** (YAGNI — no second backend; reactivate on a scheduled backend change) |
 | NEW-STATE-PERSIST-1 | P2 | **done** | 9 saves routed through `write_json_atomic`; `store._rewrite` → new `write_jsonl_atomic` (tmp+fsync+replace); orphan `os` dropped from mcp_state; +STATE-4(a) |
-| NEW-STATE-PERSIST-2 | P3 | open | `JobStore.list_all` is a read that writes to disk (jobs.py:91-93) |
+| NEW-STATE-PERSIST-2 | P3 | **done** | `list_all` is now a pure read (backfill stays at `_load`; all insert paths assign `sort_order`) |
 | MCP-1 | P1 | done | `ad6e7bf` token-derived identity; proxy forwards raw bytes |
 | MCP-2 | P1 | open (verify-gated) | codex direct-bearer inject → delete `mcp_proxy.py`; needs one live codex run |
 | MCP-3 | P2 | partial | `025d911` `mcp_state.py`; (b) inline presence pokes now via `touch_presence` (done with STATE-1); (a) `chat_set_hat` still `import app` → MCP-3a |
@@ -81,7 +81,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | STATE-6 | Done | routing_paused rename; single _rewrite |
 | STATE-7 | Defer | speculative abstraction; reactivate on a real backend change |
 | NEW-STATE-PERSIST-1 | Done (B2) | atomic adoption (9 sites) + write_jsonl_atomic; includes STATE-4(a) |
-| NEW-STATE-PERSIST-2 | Do (B2) | trivial; pure-read list_all |
+| NEW-STATE-PERSIST-2 | Done (B2) | pure-read list_all; +test_jobs |
 | MCP-1 | Done | token-derived identity |
 | MCP-2 | Do (B3) | collapse proxy; live-codex confirm folded into B3 |
 | MCP-3 | Do (a) / fold (b) | HatStore on_change; presence -> STATE-1 |
@@ -295,7 +295,7 @@ Broader than first logged. Bare `self._path.write_text(json.dumps(...))` (trunca
 - **Fix scope (修正範圍):** `rules.py:68`, `schedules.py:108`, `summaries.py:31`, `store.py:306`, `session_store.py:100+119`, `registry.py:87`, `mcp_state.py:69+93` → `write_json_atomic` (~9 sites across 7 files); `store.py:109-115` → new `write_jsonl_atomic` in `atomic_io.py` (1 helper + 1 call site). Low.
 - **Completion criteria (達成條件):** every store save routes through an atomic helper (tmp+fsync+os.replace) — grepping for `\.write_text(` and `open(.*['"]w['"]` across store.py, rules.py, schedules.py, summaries.py, session_store.py, registry.py, mcp_state.py (excluding the atomic helpers and intentional `write_text("")` wipes) returns 0 non-atomic matches; `write_jsonl_atomic` added for the message log; a kill-during-save test on each store leaves the prior file intact; `test_atomic_io` green.
 
-#### NEW-STATE-PERSIST-2 — `JobStore.list_all` is a read that writes to disk (P3, open) · NEW this audit
+#### NEW-STATE-PERSIST-2 — `JobStore.list_all` is a read that writes to disk (P3, done) · NEW this audit
 **Decision (定案):** **Do (Batch 2).** Trivial: make `list_all` a pure read; move the sort-order backfill to load/write paths.
 
 `jobs.list_all` (jobs.py:87-99) calls `_ensure_sort_orders_locked()` and, if it mutated anything, `self._save()` (91-93) — a GET that persists the whole jobs blob. The same backfill already runs at load (31-32), so the read-path copy is defensive but makes an ostensibly pure read have a write side effect (SRP/contract smell, surprising under concurrent reads, and compounds STATE-4's O(n) rewrite).
@@ -458,7 +458,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly | Server |
 | NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel | Server |
 | NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place — **fixed (B2)** | State |
-| NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk | State |
+| NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk — **fixed (B2)** | State |
 | NEW-MCP-1 | P2 | `chat_send` god-function: duplicated image-upload + duplicated @mention loop | MCP |
 | NEW-MCP-2 | P3 | MCP read contract serialized in 3 divergent inline shapes | MCP |
 | NEW-WRAP-1 | P3 | 3 forwarders re-instantiate `ServerClient` inside the watcher | Wrapper |
