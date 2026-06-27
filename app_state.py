@@ -10,27 +10,13 @@ configure() is visible everywhere — no re-export step, and no
 instead of silently creating a dead field.
 """
 
-DEFAULT_ROOM_SETTINGS = {
-    "title": "agentchattr",
-    "username": "user",
-    "font": "sans",
-    "channels": ["general"],
-    "history_limit": "all",
-    "contrast": "normal",
-    "theme": "neutral",
-    "ui_scale": 1.25,
-    "chat_scale": 1.5,
-    "custom_roles": [],
-}
-
-
 class State:
     """Live singletons wired up by app.configure(). All start empty."""
 
     __slots__ = (
         "store", "rules", "summaries", "jobs", "schedules", "router",
         "agents", "registry", "session_store", "session_engine", "config",
-        "room_settings", "agent_hats", "session_token",
+        "settings", "hats", "session_token",
     )
 
     def __init__(self):
@@ -45,8 +31,8 @@ class State:
         self.session_store = None
         self.session_engine = None
         self.config = {}
-        self.room_settings = dict(DEFAULT_ROOM_SETTINGS)
-        self.agent_hats = {}
+        self.settings = None  # settings_store.SettingsStore (created in configure)
+        self.hats = None      # settings_store.HatStore (created in configure)
         self.session_token = ""
 
 

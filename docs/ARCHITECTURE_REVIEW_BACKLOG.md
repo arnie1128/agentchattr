@@ -1,6 +1,6 @@
 # Architecture review — backlog
 
-Status: **in progress** — Batches 0–3 done, Batch 4 partial (5/9) · Branch: `refactor/arch-backlog`
+Status: **in progress** — Batches 0–3 done, Batch 4 partial (6/9) · Branch: `refactor/arch-backlog`
 
 ## Progress
 
@@ -29,7 +29,7 @@ Partials note what was intentionally deferred and where it sequences next.
 | SRV-5 | partial | `bcb5e7e` `_resolve_targets`/`_finish_agent_rename`; divergent trigger loops left inline |
 | WRAP-6 | done | `1121894` unified `resolve_path` + `~`-expansion fix |
 | STATE-1 | open | presence-service unification (registry/mcp_state/router) — beyond BUG-2's surface fix |
-| SRV-6 | pending | settings_store/hats lock + validated `update(patch)` |
+| SRV-6 | done | `settings_store.py` `SettingsStore`+`HatStore` — lock + validated `update(patch)` + atomic persist; 55-line validator moved out of app.py |
 | SRV-3 | pending | `commands.py` slash dispatch + move draft logic |
 | FE-4 | pending | migrate inbound `onmessage` switch onto `Hub.on` |
 | FE-5 | pending | `appendMessage` variants → `_messageRenderers` registry |
@@ -37,7 +37,7 @@ Partials note what was intentionally deferred and where it sequences next.
 | MCP-2 | verify-gated | needs live codex static-bearer-header check; cannot run headless |
 | STATE-7, FE-6 | deferred | large/strategic — explicit go decision required |
 
-Tests: 42 → 97 passing (`unittest`). The three large mechanical refactors (SRV-2,
+Tests: 42 → 123 passing (`unittest`). The three large mechanical refactors (SRV-2,
 MCP-3, FE-3) used a `tokenize`-based renamer to avoid corrupting strings/comments.
 
 ## How to read this

@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 import app
 import archive
+import settings_store
 from jobs import JobStore
 from rules import RuleStore
 from store import MessageStore
@@ -234,7 +235,7 @@ class ImportExportApiTests(unittest.TestCase):
             "rules": app.state.rules,
             "summaries": app.state.summaries,
             "config": app.state.config,
-            "room_settings": dict(app.state.room_settings),
+            "settings": app.state.settings,
         }
 
         app.state.store = self.store
@@ -242,15 +243,9 @@ class ImportExportApiTests(unittest.TestCase):
         app.state.rules = self.rules
         app.state.summaries = self.summaries
         app.state.config = {"server": {"data_dir": str(self.root / "appdata"), "version": "test"}}
-        app.state.room_settings = {
-            "title": "agentchattr",
-            "username": "user",
-            "font": "sans",
-            "channels": ["general"],
-            "history_limit": "all",
-            "contrast": "normal",
-            "custom_roles": [],
-        }
+        app.state.settings = settings_store.SettingsStore(
+            Path(self.root / "appdata") / "settings.json"
+        )
 
         def restore():
             app.state.store = self._saved["store"]
@@ -258,7 +253,7 @@ class ImportExportApiTests(unittest.TestCase):
             app.state.rules = self._saved["rules"]
             app.state.summaries = self._saved["summaries"]
             app.state.config = self._saved["config"]
-            app.state.room_settings = self._saved["room_settings"]
+            app.state.settings = self._saved["settings"]
 
         self.addCleanup(restore)
 
@@ -293,7 +288,7 @@ class ImportExportApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.body.decode("utf-8"))
         self.assertTrue(payload["ok"])
-        self.assertIn("planning", app.state.room_settings["channels"])
+        self.assertIn("planning", app.state.settings.channels())
         self.assertEqual(payload["sections"]["messages"]["created"], 2)
         self.assertEqual(payload["sections"]["jobs"]["created"], 1)
 

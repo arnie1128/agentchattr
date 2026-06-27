@@ -26,108 +26,33 @@ from session_store import SessionStore, validate_session_template
 from session_engine import SessionEngine
 
 import mcp_state
+import settings_store
 from app_state import state
 
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="agentchattr")
 
-# Live singletons (store/rules/registry/router/session_token/room_settings/…)
+# Live singletons (store/rules/registry/router/session_token/settings/hats/…)
 # live on the shared `state` object from app_state, set by configure().
+# Room settings and agent hats live in lock-guarded stores (settings_store).
 ws_clients: set[WebSocket] = set()
-
-# Allowed values for UI/chat font scaling (must match dropdown options in
-# static/index.html). Backend rejects anything outside this enum so the UI
-# never persists an untested ratio.
-_UI_SCALE_CHOICES = (1.0, 1.125, 1.25, 1.375)
-_CHAT_SCALE_CHOICES = (1.0, 1.25, 1.5, 1.75, 2.0)
-_THEME_CHOICES = ("neutral", "purple")
-
-# Channel validation
-_CHANNEL_NAME_RE = _re.compile(r'^[a-z0-9][a-z0-9\-]{0,19}$')
-MAX_CHANNELS = 8
-
-# Agent hats (persisted to data/hats.json)
-state.agent_hats: dict[str, str] = {}  # { agent_name: svg_string }
-
-
-def _hats_path() -> Path:
-    data_dir = state.config.get("server", {}).get("data_dir", "./data")
-    return Path(data_dir) / "hats.json"
-
-
-def _load_hats():
-    p = _hats_path()
-    if p.exists():
-        try:
-            state.agent_hats = json.loads(p.read_text("utf-8"))
-        except Exception:
-            state.agent_hats = {}
-
-
-def _save_hats():
-    p = _hats_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state.agent_hats), "utf-8")
-
-
-def _sanitize_svg(svg: str) -> str:
-    """Strip dangerous content from SVG string."""
-    svg = _re.sub(r'<script[^>]*>.*?</script>', '', svg, flags=_re.DOTALL | _re.IGNORECASE)
-    svg = _re.sub(r'\bon\w+\s*=', '', svg, flags=_re.IGNORECASE)
-    svg = _re.sub(r'javascript\s*:', '', svg, flags=_re.IGNORECASE)
-    return svg
 
 
 def set_agent_hat(agent: str, svg: str) -> str | None:
-    """Validate, sanitize, and store a hat SVG. Returns error string or None."""
-    svg = svg.strip()
-    if not svg.lower().startswith("<svg"):
-        return "Hat must be an SVG element (starts with <svg)."
-    if len(svg) > 5120:
-        return "Hat SVG too large (max 5KB)."
-    svg = _sanitize_svg(svg)
-    state.agent_hats[agent.lower()] = svg
-    _save_hats()
+    """Store a hat SVG via the hat store and broadcast. Returns error or None."""
+    err = state.hats.set(agent, svg)
+    if err:
+        return err
     if _event_loop:
         asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
     return None
 
 
 def clear_agent_hat(agent: str):
-    """Remove an agent's hat."""
-    key = agent.lower()
-    if key in state.agent_hats:
-        del state.agent_hats[key]
-        _save_hats()
-        if _event_loop:
-            asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
-
-
-def _settings_path() -> Path:
-    data_dir = state.config.get("server", {}).get("data_dir", "./data")
-    return Path(data_dir) / "settings.json"
-
-
-def _load_settings():
-    p = _settings_path()
-    if p.exists():
-        try:
-            saved = json.loads(p.read_text("utf-8"))
-            state.room_settings.update(saved)
-        except Exception:
-            pass
-    # Ensure "general" always exists and is first
-    if "channels" not in state.room_settings or not state.room_settings["channels"]:
-        state.room_settings["channels"] = ["general"]
-    elif "general" not in state.room_settings["channels"]:
-        state.room_settings["channels"].insert(0, "general")
-
-
-def _save_settings():
-    p = _settings_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state.room_settings, indent=2), "utf-8")
+    """Remove an agent's hat via the hat store and broadcast."""
+    if state.hats.clear(agent) and _event_loop:
+        asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
 
 
 def _extract_agent_token(request: Request) -> str:
@@ -290,12 +215,15 @@ def configure(cfg: dict, session_token: str = ""):
     # broadcast to all WebSocket clients
     state.store.on_message(_on_store_message)
 
-    _load_settings()
-    _load_hats()
+    state.settings = settings_store.SettingsStore(Path(data_dir) / "settings.json")
+    state.hats = settings_store.HatStore(Path(data_dir) / "hats.json")
+    state.settings.load()
+    state.hats.load()
 
     # Apply saved loop guard setting
-    if "max_agent_hops" in state.room_settings:
-        state.router.max_hops = state.room_settings["max_agent_hops"]
+    _saved_hops = state.settings.get("max_agent_hops")
+    if _saved_hops is not None:
+        state.router.max_hops = _saved_hops
 
     # Background thread: check for wrapper recovery flag files
     _data_dir = Path(data_dir)
@@ -864,7 +792,7 @@ async def broadcast(msg: dict):
 
 async def broadcast_status():
     status = state.agents.get_status()
-    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.settings.channels())
     await _broadcast(json.dumps({"type": "status", "data": status}))
 
 
@@ -884,7 +812,7 @@ async def broadcast_todo_update(msg_id: int, status: str | None):
 
 
 async def broadcast_settings():
-    await _broadcast(json.dumps({"type": "settings", "data": state.room_settings}))
+    await _broadcast(json.dumps({"type": "settings", "data": state.settings.snapshot()}))
 
 
 async def broadcast_rule(action: str, rule: dict):
@@ -904,7 +832,7 @@ async def broadcast_session(action: str, session: dict):
 
 
 async def broadcast_hats():
-    await _broadcast(json.dumps({"type": "hats", "data": state.agent_hats}))
+    await _broadcast(json.dumps({"type": "hats", "data": state.hats.snapshot()}))
 
 
 async def broadcast_agents():
@@ -945,7 +873,7 @@ async def websocket_endpoint(websocket: WebSocket):
     ws_clients.add(websocket)
 
     # Send settings
-    await websocket.send_text(json.dumps({"type": "settings", "data": state.room_settings}))
+    await websocket.send_text(json.dumps({"type": "settings", "data": state.settings.snapshot()}))
 
     # Send registered instances (used for pills/mentions)
     agent_cfg = state.registry.get_agent_config() if state.registry else {}
@@ -964,7 +892,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.send_text(json.dumps({"type": "rules", "data": state.rules.list_all()}))
 
     # Send hats
-    await websocket.send_text(json.dumps({"type": "hats", "data": state.agent_hats}))
+    await websocket.send_text(json.dumps({"type": "hats", "data": state.hats.snapshot()}))
 
     # Send jobs
     await websocket.send_text(json.dumps({"type": "jobs", "data": state.jobs.list_all()}))
@@ -985,11 +913,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 }))
 
     # Send history (per channel based on history_limit)
-    limit_val = state.room_settings.get("history_limit", "all")
+    limit_val = state.settings.get("history_limit", "all")
     count = 10000 if limit_val == "all" else int(limit_val)
-    
+
     history = []
-    for ch in state.room_settings["channels"]:
+    for ch in state.settings.channels():
         history.extend(state.store.get_recent(count, channel=ch))
     
     # Sort history by timestamp to interleave messages from different channels correctly
@@ -1009,7 +937,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if event.get("type") == "message":
                 text = event.get("text", "").strip()
                 attachments = event.get("attachments", [])
-                sender = event.get("sender") or state.room_settings.get("username", "user")
+                sender = event.get("sender") or state.settings.get("username", "user")
                 channel = event.get("channel", "general")
 
                 if not text and not attachments:
@@ -1080,9 +1008,9 @@ async def websocket_endpoint(websocket: WebSocket):
             elif event.get("type") in ("decision_propose", "rule_propose"):
                 text = event.get("text") or event.get("decision", "")
                 text = text.strip()
-                author = event.get("author") or event.get("owner") or state.room_settings.get("username", "user")
+                author = event.get("author") or event.get("owner") or state.settings.get("username", "user")
                 reason = event.get("reason", "")
-                is_human = author.lower() == state.room_settings.get("username", "user").lower()
+                is_human = author.lower() == state.settings.get("username", "user").lower()
                 if text:
                     rule = state.rules.propose(text, author, reason)
                     if rule:
@@ -1142,61 +1070,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             elif event.get("type") == "update_settings":
-                new = event.get("data", {})
-                if "title" in new and isinstance(new["title"], str):
-                    state.room_settings["title"] = new["title"].strip() or "agentchattr"
-                if "username" in new and isinstance(new["username"], str):
-                    state.room_settings["username"] = new["username"].strip() or "user"
-                if "font" in new and new["font"] in ("mono", "serif", "sans"):
-                    state.room_settings["font"] = new["font"]
-                if "max_agent_hops" in new:
-                    try:
-                        hops = int(new["max_agent_hops"])
-                        hops = max(1, min(hops, 1000))
-                        state.room_settings["max_agent_hops"] = hops
-                        state.router.max_hops = hops
-                    except (ValueError, TypeError):
-                        pass
-                if "contrast" in new and new["contrast"] in ("normal", "high"):
-                    state.room_settings["contrast"] = new["contrast"]
-                if "theme" in new and new["theme"] in _THEME_CHOICES:
-                    state.room_settings["theme"] = new["theme"]
-                if "ui_scale" in new:
-                    try:
-                        v = float(new["ui_scale"])
-                        if any(abs(v - c) < 1e-6 for c in _UI_SCALE_CHOICES):
-                            state.room_settings["ui_scale"] = v
-                    except (ValueError, TypeError):
-                        pass
-                if "chat_scale" in new:
-                    try:
-                        v = float(new["chat_scale"])
-                        if any(abs(v - c) < 1e-6 for c in _CHAT_SCALE_CHOICES):
-                            state.room_settings["chat_scale"] = v
-                    except (ValueError, TypeError):
-                        pass
-                if "rules_refresh_interval" in new:
-                    try:
-                        ri = int(new["rules_refresh_interval"])
-                        state.room_settings["rules_refresh_interval"] = max(0, min(ri, 100))
-                    except (ValueError, TypeError):
-                        pass
-                if "history_limit" in new:
-                    val = str(new["history_limit"]).strip().lower()
-                    if val == "all":
-                        state.room_settings["history_limit"] = "all"
-                    else:
-                        try:
-                            val_int = int(val)
-                            state.room_settings["history_limit"] = max(1, min(val_int, 10000))
-                        except (ValueError, TypeError):
-                            pass
-                if "custom_roles" in new and isinstance(new["custom_roles"], list):
-                    state.room_settings["custom_roles"] = [
-                        str(r).strip()[:20] for r in new["custom_roles"]
-                        if isinstance(r, str) and r.strip()
-                    ][:20]
-                _save_settings()
+                changed = state.settings.update(event.get("data", {}))
+                if "max_agent_hops" in changed:
+                    state.router.max_hops = changed["max_agent_hops"]
                 await broadcast_settings()
 
             elif event.get("type") == "rename_agent":
@@ -1250,52 +1126,29 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             elif event.get("type") == "channel_create":
-                name = (event.get("name") or "").strip().lower()
-                if not name or not _CHANNEL_NAME_RE.match(name):
-                    continue
-                if name in state.room_settings["channels"]:
-                    continue
-                if len(state.room_settings["channels"]) >= MAX_CHANNELS:
-                    continue
-                state.room_settings["channels"].append(name)
-                _save_settings()
-                await broadcast_settings()
+                if state.settings.add_channel(event.get("name")) is None:
+                    await broadcast_settings()
 
             elif event.get("type") == "channel_rename":
                 old_name = (event.get("old_name") or "").strip().lower()
                 new_name = (event.get("new_name") or "").strip().lower()
-                if old_name == "general":
-                    continue
-                if not new_name or not _CHANNEL_NAME_RE.match(new_name):
-                    continue
-                if old_name not in state.room_settings["channels"]:
-                    continue
-                if new_name in state.room_settings["channels"]:
-                    continue
-                idx = state.room_settings["channels"].index(old_name)
-                state.room_settings["channels"][idx] = new_name
-                state.store.rename_channel(old_name, new_name)
-                mcp_state.migrate_cursors_rename(old_name, new_name)
-                _save_settings()
-                await broadcast_settings()
-                # Tell clients to migrate DOM elements
-                await _broadcast(json.dumps({
-                    "type": "channel_renamed",
-                    "old_name": old_name,
-                    "new_name": new_name,
-                }))
+                if state.settings.rename_channel(old_name, new_name) is None:
+                    state.store.rename_channel(old_name, new_name)
+                    mcp_state.migrate_cursors_rename(old_name, new_name)
+                    await broadcast_settings()
+                    # Tell clients to migrate DOM elements
+                    await _broadcast(json.dumps({
+                        "type": "channel_renamed",
+                        "old_name": old_name,
+                        "new_name": new_name,
+                    }))
 
             elif event.get("type") == "channel_delete":
                 name = (event.get("name") or "").strip().lower()
-                if name == "general":
-                    continue
-                if name not in state.room_settings["channels"]:
-                    continue
-                state.room_settings["channels"].remove(name)
-                state.store.delete_channel(name)
-                mcp_state.migrate_cursors_delete(name)
-                _save_settings()
-                await broadcast_settings()
+                if state.settings.remove_channel(name) is None:
+                    state.store.delete_channel(name)
+                    mcp_state.migrate_cursors_delete(name)
+                    await broadcast_settings()
 
     except WebSocketDisconnect:
         ws_clients.discard(websocket)
@@ -1368,8 +1221,8 @@ async def import_history(file: UploadFile = File(...)):
             {"error": f"file too large (max {_archive.MAX_IMPORT_SIZE // 1024 // 1024}MB)"},
             status_code=400,
         )
-    channel_list = list(state.room_settings.get("channels", ["general"]))
-    max_ch = state.room_settings.get("max_channels", 8)
+    channel_list = state.settings.channels()
+    max_ch = state.settings.get("max_channels", 8)
     report = _archive.import_archive(
         content, state.store, state.jobs, state.rules, state.summaries,
         channel_list, max_channels=max_ch,
@@ -1380,8 +1233,7 @@ async def import_history(file: UploadFile = File(...)):
         return JSONResponse({"error": error}, status_code=status)
     # Update channel list if new channels were created
     if report["channels"]["created"]:
-        state.room_settings["channels"] = channel_list
-        _save_settings()
+        state.settings.replace_channels(channel_list)
         await broadcast_settings()
     # Tell all connected clients to reload (picks up imported messages)
     await _broadcast(json.dumps({"type": "reload"}))
@@ -1425,13 +1277,13 @@ async def api_send(request: Request):
 @app.get("/api/status")
 async def get_status():
     status = state.agents.get_status()
-    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.settings.channels())
     return status
 
 
 @app.get("/api/settings")
 async def get_settings():
-    return state.room_settings
+    return state.settings.snapshot()
 
 
 @app.delete("/api/hat/{agent_name}")
@@ -1577,7 +1429,7 @@ async def resolve_decision(msg_id: int, request: Request):
     if error:
         return JSONResponse({"error": error[0]}, status_code=error[1])
     # Post the chosen answer as a regular chat message tagged @sender
-    username = state.room_settings.get("username", "user")
+    username = state.settings.get("username", "user")
     reply_text = f"@{sender} {chosen}" if sender else chosen
     try:
         state.store.add(username, reply_text, reply_to=msg_id, channel=channel)
@@ -1860,7 +1712,7 @@ async def get_rules():
 async def get_active_rules():
     """Get compact active rules for agent injection."""
     data = state.rules.active_list()
-    data["refresh_interval"] = state.room_settings.get("rules_refresh_interval", 10)
+    data["refresh_interval"] = state.settings.get("rules_refresh_interval", 10)
     return JSONResponse(data)
 
 

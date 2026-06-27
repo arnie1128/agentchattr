@@ -676,7 +676,7 @@ def chat_claim(sender: str, name: str = "", ctx: Context | None = None) -> str:
 
 def chat_channels() -> str:
     """List all available channels. Returns a JSON array of channel names."""
-    channels = state.room_settings.get("channels", ["general"]) if state.room_settings else ["general"]
+    channels = state.settings.channels() if state.settings else ["general"]
     return json.dumps(channels)
 
 
