@@ -26,6 +26,7 @@ Store.set('channelUnread', {});  // { channelName: count } — single owner is S
 let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
 Store.set('colorOverrides', JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}'));  // single owner is Store (FE-2)
+Store.set('agentRoles', {});  // name -> role string; single owner is Store (FE-4, shared with naming-lightbox panel)
 let schedulesList = [];  // array of schedule objects from server
 
 // Expose the remaining non-state shims that extracted modules read via window.*
@@ -471,7 +472,7 @@ function _renderChat(el, msg) {
 
     const statusLabel = todoStatusLabel(todoStatus);
     el.dataset.rawText = msg.text;
-    const senderRole = _agentRoles[msg.sender] || '';
+    const senderRole = Store.get('agentRoles')[msg.sender] || '';
     const roleClass = senderRole ? 'bubble-role has-role' : 'bubble-role';
     const rolePillHtml = !isSelf ? `<button class="${roleClass}" onclick="showBubbleRolePicker(this, '${escapeHtml(msg.sender)}')" title="${senderRole ? escapeHtml(senderRole) : 'Set role'}">${senderRole || 'choose a role'}</button>` : '';
     // Inline decision choices (if present)
@@ -920,7 +921,7 @@ function showPillPopover(pillEl, opts) {
     popover.dataset.agent = opts.name;
     popover.style.setProperty('--agent-color', Store.get('colorOverrides')[opts.name] || opts.color);
 
-    const currentRole = (_agentRoles[opts.name] || '').toLowerCase();
+    const currentRole = (Store.get('agentRoles')[opts.name] || '').toLowerCase();
     const roleChipsHtml = ROLE_PRESETS.map(p =>
         `<button class="role-preset-chip pill-role-chip ${currentRole === p.label.toLowerCase() ? 'active' : ''}" data-role="${escapeHtml(p.label)}">${p.emoji} ${escapeHtml(p.label)}</button>`
     ).join('');
@@ -1146,7 +1147,7 @@ function showBubbleRolePicker(btn, agentName) {
         p.remove();
     });
 
-    const currentRole = (_agentRoles[agentName] || '').toLowerCase();
+    const currentRole = (Store.get('agentRoles')[agentName] || '').toLowerCase();
     const picker = document.createElement('div');
     picker.className = 'bubble-role-picker';
     const closePicker = () => { if (msgEl) msgEl.style.zIndex = ''; picker.remove(); };
@@ -1237,7 +1238,7 @@ function showBubbleRolePicker(btn, agentName) {
 }
 
 function _syncBubbleRolePills(agentName) {
-    const role = String(_agentRoles[agentName] || '').trim();
+    const role = String(Store.get('agentRoles')[agentName] || '').trim();
     const pillText = role || 'choose a role';
     document.querySelectorAll('.message').forEach(msg => {
         const senderEl = msg.querySelector('.msg-sender');
@@ -1252,7 +1253,7 @@ function _syncBubbleRolePills(agentName) {
 function _setRole(agentName, role) {
     api.post(`/api/roles/${agentName}`, { role });
     // Optimistic update
-    _agentRoles[agentName] = role;
+    Store.get('agentRoles')[agentName] = role;
     _syncBubbleRolePills(agentName);
     // If custom role (not in presets), auto-save it
     if (role && !ROLE_PRESETS.some(p => p.label.toLowerCase() === role.toLowerCase())) {
@@ -1279,7 +1280,7 @@ function _deleteCustomRole(role) {
         wsClient.send('update_settings', { data: { custom_roles: updated } });
     }
     // Unassign from any agents currently using this role
-    for (const [agentName, agentRole] of Object.entries(_agentRoles)) {
+    for (const [agentName, agentRole] of Object.entries(Store.get('agentRoles'))) {
         if (agentRole && agentRole.toLowerCase() === lower) {
             _setRole(agentName, '');
         }
@@ -1288,11 +1289,9 @@ function _deleteCustomRole(role) {
 
 // --- Status ---
 
-const _agentRoles = {};  // name → role string
-
 function fetchRoles() {
     api.get('/api/roles').then(r => r.json()).then(roles => {
-        Object.assign(_agentRoles, roles);
+        Object.assign(Store.get('agentRoles'), roles);
         for (const name of Object.keys(roles || {})) {
             _syncBubbleRolePills(name);
         }
@@ -1327,7 +1326,7 @@ function updateStatus(data) {
 
         // Track role (displayed on bubbles, not on pill)
         if (info.role !== undefined) {
-            _agentRoles[name] = info.role;
+            Store.get('agentRoles')[name] = info.role;
             _syncBubbleRolePills(name);
         }
     }
