@@ -23,5 +23,5 @@ if "%AGENTCHATTR_ROOT%"=="" (
     exit /b 1
 )
 
-call "%AGENTCHATTR_ROOT%\windows\start_gemini.bat" --agent-cwd "%AGENT_CWD%" %*
+call "%AGENTCHATTR_ROOT%\launchers\windows\start_gemini.bat" --agent-cwd "%AGENT_CWD%" %*
 endlocal

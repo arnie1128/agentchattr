@@ -46,8 +46,7 @@ INCLUDE_FILES = [
 
 INCLUDE_DIRS = [
     "static",
-    "windows",
-    "macos-linux",
+    "launchers",
     "session_templates",
     "project-template",
 ]

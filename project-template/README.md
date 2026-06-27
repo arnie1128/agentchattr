@@ -135,7 +135,7 @@ Any scheme works as long as nothing collides.
 The thin wrappers source `_load.sh` / call `_load.py` to read
 `config.toml` and export `AGENTCHATTR_*` environment variables, then
 hand off to the main agentchattr install's launcher scripts (under
-`agentchattr/macos-linux/` or `agentchattr/windows/`).
+`agentchattr/launchers/macos-linux/` or `agentchattr/launchers/windows/`).
 
 ## Troubleshooting
 

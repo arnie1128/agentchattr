@@ -9,7 +9,7 @@
 #   2. Edit the [agents.NAME] section below
 #   3. Start the server: python run.py
 #   4. Start the wrapper: python wrapper_api.py NAME
-#      (or use: windows/start_api_agent.bat NAME)
+#      (or use: launchers/windows/start_api_agent.bat NAME)
 
 # --- Example: Qwen via llama-server ---
 # [agents.qwen]

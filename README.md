@@ -12,7 +12,7 @@ Agents and humans talk in a shared chat room with multiple channels — when any
 
 ## Quickstart (Windows)
 
-**1. Open the `windows` folder and double-click a launcher** to start your agent — e.g. `start_claude.bat`, `start_codex.bat`, `start_gemini.bat`, etc.
+**1. Open the `launchers/windows` folder and double-click a launcher** to start your agent — e.g. `start_claude.bat`, `start_codex.bat`, `start_gemini.bat`, etc.
 
 On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server if one isn't already running, so you can launch in any order. Run multiple launchers for multiple agents — they share the same server.
 
@@ -57,7 +57,7 @@ brew install tmux    # macOS
 
 **2. Launch an agent:**
 
-Open a terminal in the `macos-linux` folder (right-click → "Open Terminal Here", or `cd` into it) and run a launcher — e.g. `sh start_claude.sh`, `sh start_codex.sh`, `sh start_gemini.sh`, etc.
+Open a terminal in the `launchers/macos-linux` folder (right-click → "Open Terminal Here", or `cd` into it) and run a launcher — e.g. `sh start_claude.sh`, `sh start_codex.sh`, `sh start_gemini.sh`, etc.
 
 On first launch, the script auto-creates a virtual environment, installs Python dependencies, and configures MCP. Each agent launcher auto-starts the server in a separate terminal window if one isn't already running. The agent opens inside a **tmux** session. Detach with `Ctrl+B, D` — the agent keeps running in the background. The wrapper prints the exact `tmux attach -t ...` command for reattaching; the name includes a short project fingerprint so isolated project launches do not collide.
 
@@ -368,10 +368,10 @@ If you want to run the server without a launcher:
 
 ```bash
 # Windows — Terminal 1: server only
-windows\start.bat
+launchers\windows\start.bat
 
 # Mac/Linux — Terminal 1: server only
-./macos-linux/start.sh
+./launchers/macos-linux/start.sh
 
 # Terminal 2 — agent wrapper (any platform)
 python wrapper.py claude
@@ -501,10 +501,10 @@ Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM 
 3. Start the wrapper:
    ```bash
    # Windows
-   windows\start_api_agent.bat qwen
+   launchers\windows\start_api_agent.bat qwen
 
    # Mac/Linux
-   ./macos-linux/start_api_agent.sh qwen
+   ./launchers/macos-linux/start_api_agent.sh qwen
 
    # Or directly
    python wrapper_api.py qwen
@@ -526,10 +526,10 @@ The wrapper registers with the server, watches for @mentions, reads recent chat 
 3. Launch:
    ```bash
    # Windows
-   windows\start_minimax.bat
+   launchers\windows\start_minimax.bat
 
    # Mac/Linux
-   sh macos-linux/start_minimax.sh
+   sh launchers/macos-linux/start_minimax.sh
 
    # Or directly
    python wrapper_api.py minimax
@@ -581,8 +581,8 @@ Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `
 | `wrapper_windows.py` | Windows: keystroke injection + screen buffer activity detection |
 | `wrapper_unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
 | `config.toml` | All configuration (agents, ports, routing) |
-| `windows/start_*_yolo/bypass.bat` | Auto-approve launchers (Windows) |
-| `macos-linux/start_*_yolo/bypass.sh` | Auto-approve launchers (Mac/Linux) |
+| `launchers/windows/start_*_yolo/bypass.bat` | Auto-approve launchers (Windows) |
+| `launchers/macos-linux/start_*_yolo/bypass.sh` | Auto-approve launchers (Mac/Linux) |
 
 ## Requirements
 

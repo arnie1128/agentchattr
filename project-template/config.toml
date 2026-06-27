@@ -10,7 +10,7 @@
 #   * Config-dir relative "../some/path"  (anchored at this file's directory)
 
 [agentchattr]
-# Where the agentchattr install lives (wrapper.py / run.py / macos-linux/).
+# Where the agentchattr install lives (wrapper.py / run.py / launchers/macos-linux/).
 # Three forms accepted (see above). Change to match your local layout.
 #
 # Examples:
