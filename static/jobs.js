@@ -225,7 +225,7 @@ function setupJobsInput() {
 
 function getJobRecipientOptions() {
     const opts = [];
-    for (const [name, cfg] of Object.entries(window.agentConfig)) {
+    for (const [name, cfg] of Object.entries(Store.get('agentConfig'))) {
         if (cfg.state === 'pending') continue;
         opts.push({
             name,
@@ -278,7 +278,7 @@ function resolveJobDefaultRecipient(job, messages = []) {
     // For active threads with history, infer from last non-self agent sender.
     for (let i = messages.length - 1; i >= 0; i--) {
         const sender = String(messages[i]?.sender || '');
-        if (!sender || sender.toLowerCase() === window.username.toLowerCase()) continue;
+        if (!sender || sender.toLowerCase() === Store.get('username').toLowerCase()) continue;
         const normalized = _normalizeJobRecipient(sender, opts);
         if (normalized) return normalized;
     }
@@ -1142,7 +1142,7 @@ async function sendJobMessage() {
     try {
         const resp = await api.post(`/api/jobs/${activeJobId}/messages`, {
             text: outboundText,
-            sender: window.username,
+            sender: Store.get('username'),
             attachments: jobPendingAttachments.map(a => ({
                 path: a.path, name: a.name, url: a.url,
             })),
@@ -1315,8 +1315,8 @@ async function submitCreateJob(btn) {
             body: jobBody,
             type: 'job',
             channel: window.activeChannel,
-            created_by: window.username,
-            assignee: window._lastMentionedAgent || '',
+            created_by: Store.get('username'),
+            assignee: Store.get('_lastMentionedAgent') || '',
         });
         form.remove();
     } catch (e) {
@@ -1369,7 +1369,7 @@ function handleJobEvent(action, data) {
             activeJobId === data.job_id
         );
         const sender = (data.message && data.message.sender) ? String(data.message.sender) : '';
-        const isSelfMessage = sender.toLowerCase() === window.username.toLowerCase();
+        const isSelfMessage = sender.toLowerCase() === Store.get('username').toLowerCase();
         const msgType = data.message.type || 'chat';
         if (!isSelfMessage) {
             const normalized = _normalizeJobRecipient(sender);
@@ -1381,7 +1381,7 @@ function handleJobEvent(action, data) {
         }
 
         // Play notification sound for new job messages from others (matching channel behavior)
-        if (window.soundEnabled && !document.hasFocus() && msgType === 'chat' && !isSelfMessage && sender) {
+        if (Store.get('soundEnabled') && !document.hasFocus() && msgType === 'chat' && !isSelfMessage && sender) {
             window.playNotificationSound(sender);
         }
 
@@ -1394,7 +1394,7 @@ function handleJobEvent(action, data) {
         } else if (!isSelfMessage) {
             jobUnread[data.job_id] = (jobUnread[data.job_id] || 0) + 1;
             // Play soft pluck for chat messages in other job threads
-            if (window.soundEnabled && document.hasFocus() && msgType === 'chat' && window.playCrossChannelSound) {
+            if (Store.get('soundEnabled') && document.hasFocus() && msgType === 'chat' && window.playCrossChannelSound) {
                 window.playCrossChannelSound();
             }
         }
@@ -1463,7 +1463,7 @@ function showConvertToJobModal(msgId) {
     const msgEl = document.querySelector(`.message[data-id="${msgId}"]`);
     if (!msgEl) return;
     const rawText = msgEl.dataset.rawText || '';
-    const msgSender = msgEl.querySelector('.msg-sender')?.textContent || window.username;
+    const msgSender = msgEl.querySelector('.msg-sender')?.textContent || Store.get('username');
 
     let modal = document.getElementById('convert-job-modal');
     if (!modal) {
@@ -1499,12 +1499,12 @@ function showConvertToJobModal(msgId) {
     // Populate agent picker — only agents, not humans
     const selectEl = modal.querySelector('.convert-job-agent');
     selectEl.innerHTML = '';
-    const agents = Object.keys(window.agentConfig);
+    const agents = Object.keys(Store.get('agentConfig'));
     const defaultAgent = agents.includes(msgSender) ? msgSender : agents[0];
     for (const name of agents) {
         const opt = document.createElement('option');
         opt.value = name;
-        const cfg = window.agentConfig[name];
+        const cfg = Store.get('agentConfig')[name];
         opt.textContent = cfg?.label || name;
         if (name === defaultAgent) opt.selected = true;
         selectEl.appendChild(opt);
@@ -1546,7 +1546,7 @@ async function _doConvertToJob() {
     };
     if (window.appendMessage) window.appendMessage(statusMsg);
 
-    const instruction = `${window.username}: Please read the following message and use chat_propose_job to propose it as a job. Write a concise title (max 80 chars) and a clear body (max 500 chars) summarizing the task:\n\n---\n${rawText.substring(0, 800)}\n---`;
+    const instruction = `${Store.get('username')}: Please read the following message and use chat_propose_job to propose it as a job. Write a concise title (max 80 chars) and a clear body (max 500 chars) summarizing the task:\n\n---\n${rawText.substring(0, 800)}\n---`;
 
     try {
         await api.post('/api/trigger-agent', {
@@ -1993,7 +1993,7 @@ function updateJobMentionMenu() {
 
 function selectJobMention(name) {
     const input = document.getElementById('jobs-conv-input-text');
-    window._lastMentionedAgent = name; // track for future job creation
+    Store.set('_lastMentionedAgent', name); // track for future job creation
     const text = input.value;
     const cursor = input.selectionStart;
     const before = text.slice(0, jobMentionStart);
