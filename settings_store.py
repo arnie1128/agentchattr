@@ -245,6 +245,22 @@ class HatStore:
         self._path = Path(path)
         self._lock = threading.RLock()
         self._data: dict[str, str] = {}
+        self._callbacks: list = []  # fired after a successful set/clear
+
+    def on_change(self, callback):
+        """Register a callback() fired after any hat is set or cleared.
+
+        Lets the server broadcast the updated snapshot without the MCP tool
+        reaching back into app.py (MCP-3a).
+        """
+        self._callbacks.append(callback)
+
+    def _fire(self):
+        for cb in self._callbacks:
+            try:
+                cb()
+            except Exception:
+                pass
 
     def load(self):
         with self._lock:
@@ -269,17 +285,21 @@ class HatStore:
         with self._lock:
             self._data[agent.lower()] = svg
             self._save()
+        self._fire()
         return None
 
     def clear(self, agent: str) -> bool:
         """Remove an agent's hat. Returns whether anything was removed."""
         key = agent.lower()
+        changed = False
         with self._lock:
             if key in self._data:
                 del self._data[key]
                 self._save()
-                return True
-        return False
+                changed = True
+        if changed:
+            self._fire()
+        return changed
 
     def snapshot(self) -> dict:
         with self._lock:

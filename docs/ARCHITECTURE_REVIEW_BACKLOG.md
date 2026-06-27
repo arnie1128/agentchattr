@@ -33,7 +33,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-STATE-PERSIST-2 | P3 | **done** | `list_all` is now a pure read (backfill stays at `_load`; all insert paths assign `sort_order`) |
 | MCP-1 | P1 | done | `ad6e7bf` token-derived identity; proxy forwards raw bytes |
 | MCP-2 | P1 | open (verify-gated) | codex direct-bearer inject → delete `mcp_proxy.py`; needs one live codex run |
-| MCP-3 | P2 | partial | `025d911` `mcp_state.py`; (b) inline presence pokes now via `touch_presence` (done with STATE-1); (a) `chat_set_hat` still `import app` → MCP-3a |
+| MCP-3 | P2 | **done** | (b) presence pokes via `touch_presence` (STATE-1); (a) `HatStore.on_change` broadcasts → `chat_set_hat` drops `import app` |
 | NEW-MCP-1 | P2 | open | `chat_send` god-function: duplicated image-upload + duplicated @mention-trigger loop |
 | NEW-MCP-2 | P3 | open | MCP read contract serialized in 3 divergent inline shapes |
 | WRAP-1 | P1 | done | `31c6e78` `server_client.py` single HTTP contract |
@@ -84,7 +84,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-STATE-PERSIST-2 | Done (B2) | pure-read list_all; +test_jobs |
 | MCP-1 | Done | token-derived identity |
 | MCP-2 | Do (B3) | collapse proxy; live-codex confirm folded into B3 |
-| MCP-3 | Do (a) / fold (b) | HatStore on_change; presence -> STATE-1 |
+| MCP-3 | Done (a+b) | HatStore on_change (no more MCP->app import); presence folded into STATE-1 |
 | NEW-MCP-1 | Do (after SRV-5) | save_upload helper + shared trigger loop |
 | NEW-MCP-2 | Do (B4) | single serialize_message under golden fixtures |
 | WRAP-1 | Done | ServerClient single HTTP contract |
@@ -319,7 +319,7 @@ Structurally verified. The proxy is codex-only (+ unconfigured-custom fallback):
 - **Fix scope (修正範圍):** `mcp_inject.py` rewrite `_BUILTIN_DEFAULTS['codex']` (127-132) + bearer-env branch (~20 lines), remove proxy_flag branch (276-281) + `proxy_url` params; `wrapper.py` delete import 244 / `_start_identity_proxy` 239-263 / needs_proxy block 308-324 / proxy refs 354-356, 560-561; `mcp_proxy.py` delete (272 lines); `build_release.py:23` drop entry; README proxy row; `tests/test_wrapper_mcp_config.py` assert codex inject emits bearer-env `-c` flags + token in `inject_env`. ~5 files, ~320 lines net deletion.
 - **Completion criteria (達成條件):** `grep -rn 'McpIdentityProxy|mcp_proxy|_start_identity_proxy|needs_proxy|proxy_url' *.py` → 0 AND `_BUILTIN_DEFAULTS['codex']['mcp_inject'] != 'proxy_flag'` AND a unit test asserts codex `launch_args` contain `mcp_servers.agentchattr.bearer_token_env_var` and `inject_env` carries the token AND **one live codex session against a running server posts a `chat_send` the server authenticates by token (end-to-end)**. The live-codex step is the gate — asserted from codex CLI docs but not re-run in this pass; mechanically low-risk since the server already authenticates Bearer tokens from every other direct-inject agent.
 
-#### MCP-3 — extract runtime-state god-module out of mcp_bridge (P2, partial)
+#### MCP-3 — extract runtime-state god-module out of mcp_bridge (P2, done)
 **Decision (定案):** **Do (a) (Batch 3):** give `HatStore` an `on_change` callback so `chat_set_hat` drops its `import app` — removes the last MCP->app reach-back. **Fold (b)** (presence private-poke removal) into STATE-1 — it is the same work.
 
 Done half: `mcp_state.py` (213 lines) owns presence/activity/cursors/roles/last-read + persistence + migration; `grep 'mcp_bridge\._(presence|activity|cursors|roles|renamed_from)'` → 0. **Not done:** (1) `chat_set_hat` (mcp_bridge.py:645-646) still does `import app; app.set_agent_hat(...)` — the only MCP tool reaching back into app; `HatStore` has no `on_change` so the lazy import is forced. (2) the app.py reaper (264-350) + handlers (1654-1655, 1764-1772, 1801-1802) acquire `mcp_state._presence_lock` and mutate its private dicts. (3, missed before) `mcp_bridge.py` itself writes `mcp_state._presence[...]=time.time()` inline at 255, 322, 358 instead of calling `_touch_presence` — the MCP module pokes its own state module's privates.

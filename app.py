@@ -42,19 +42,13 @@ app = FastAPI(title="agentchattr")
 ws_clients: set[WebSocket] = set()
 
 
-def set_agent_hat(agent: str, svg: str) -> str | None:
-    """Store a hat SVG via the hat store and broadcast. Returns error or None."""
-    err = state.hats.set(agent, svg)
-    if err:
-        return err
+def _on_hat_change():
+    """Broadcast the hat snapshot after any HatStore set/clear.
+
+    Registered as the HatStore on_change callback in configure() so MCP's
+    chat_set_hat can mutate hats without importing app (MCP-3a).
+    """
     if _event_loop:
-        asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
-    return None
-
-
-def clear_agent_hat(agent: str):
-    """Remove an agent's hat via the hat store and broadcast."""
-    if state.hats.clear(agent) and _event_loop:
         asyncio.run_coroutine_threadsafe(broadcast_hats(), _event_loop)
 
 
@@ -243,6 +237,7 @@ def configure(cfg: dict, session_token: str = ""):
     state.hats = settings_store.HatStore(Path(data_dir) / "hats.json")
     state.settings.load()
     state.hats.load()
+    state.hats.on_change(_on_hat_change)
 
     # Apply saved loop guard setting
     _saved_hops = state.settings.get("max_agent_hops")
@@ -1073,7 +1068,7 @@ async def get_settings():
 @app.delete("/api/hat/{agent_name}")
 async def delete_hat(agent_name: str):
     """Remove an agent's hat (called by the trash-can UI)."""
-    clear_agent_hat(agent_name)
+    state.hats.clear(agent_name)  # on_change broadcasts
     return JSONResponse({"ok": True})
 
 

@@ -186,6 +186,18 @@ class HatStoreTests(unittest.TestCase):
         reloaded.load()
         self.assertIn("a", reloaded.snapshot())
 
+    def test_on_change_fires_on_set_and_clear(self):
+        fires = []
+        self.store.on_change(lambda: fires.append(1))
+        self.store.set("a", "<svg></svg>")          # success -> fire
+        self.assertEqual(len(fires), 1)
+        self.store.set("a", "<div></div>")          # invalid -> no fire
+        self.assertEqual(len(fires), 1)
+        self.store.clear("a")                        # removed -> fire
+        self.assertEqual(len(fires), 2)
+        self.store.clear("a")                        # nothing to remove -> no fire
+        self.assertEqual(len(fires), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

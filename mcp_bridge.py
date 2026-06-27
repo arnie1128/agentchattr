@@ -639,8 +639,7 @@ def chat_set_hat(sender: str, svg: str, target: str = "", ctx: Context | None = 
     if err:
         return err
     hat_owner = target.strip() if target.strip() else sender
-    import app
-    err = app.set_agent_hat(hat_owner, svg)
+    err = state.hats.set(hat_owner, svg)  # on_change broadcasts (no app import)
     if err:
         return f"Error: {err}"
     if hat_owner != sender:
