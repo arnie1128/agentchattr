@@ -1,6 +1,44 @@
 # Architecture review — backlog
 
-Status: **review complete, no work started** · Date: 2026-06-27 · Branch: `main`
+Status: **in progress** — Batches 0–3 done, Batch 4 partial (5/9) · Branch: `refactor/arch-backlog`
+
+## Progress
+
+Each item is committed individually (green tree + per-item five-dimension review).
+Partials note what was intentionally deferred and where it sequences next.
+
+| Item | State | Commit / note |
+|---|---|---|
+| BUG-1 | done | `640b396` hold lock + reject stale snapshot on advance |
+| BUG-3 | done | `6d3e6d8` `atomic_io.write_json_atomic` |
+| SRV-1 | done | `e893bcf` route all WS broadcasts through `_broadcast` |
+| WRAP-1 | done | `31c6e78` `server_client.py` |
+| FE-1 | done | `df0aec2` `api.js` + `wsClient.js` |
+| MCP-1 | done | `ad6e7bf` drop vestigial sender-stamping |
+| BUG-2 | done | `4ba754b` `@all` tags only reachable agents |
+| WRAP-2 | done | `436c643` `mcp_inject.py` |
+| STATE-5 | done | `6e72c2e` `naming.py` (parse/slot/family/color) |
+| SRV-2 | done | `09894e7` `app_state.state` single object |
+| MCP-3 | done | `025d911` `mcp_state.py` (presence/cursors/roles) |
+| WRAP-3 | partial | `9cf1af6` argparse/proxy extracted; identity+monitor closures → WRAP-5 |
+| FE-2 | partial | `47a9895` `format.js` + explicit globals; state-coupled leaf extraction → after FE-3 |
+| FE-3 | partial | `9214916` `activeChannel` single-owner; other bridged globals follow same pattern |
+| STATE-6 | done | `037695e` collapse rewrite + `paused`→`routing_paused` |
+| STATE-3 | done | `0d61519` enrich a copy, keep view fields off the record |
+| SRV-4 | done | `472c082` public `store.resolve_decision` / `jobs.resolve_message` |
+| SRV-5 | partial | `bcb5e7e` `_resolve_targets`/`_finish_agent_rename`; divergent trigger loops left inline |
+| WRAP-6 | done | `1121894` unified `resolve_path` + `~`-expansion fix |
+| STATE-1 | open | presence-service unification (registry/mcp_state/router) — beyond BUG-2's surface fix |
+| SRV-6 | pending | settings_store/hats lock + validated `update(patch)` |
+| SRV-3 | pending | `commands.py` slash dispatch + move draft logic |
+| FE-4 | pending | migrate inbound `onmessage` switch onto `Hub.on` |
+| FE-5 | pending | `appendMessage` variants → `_messageRenderers` registry |
+| WRAP-4/5 | pending | shared `run_loop(backend)` + `identity.py` (absorbs WRAP-3 closure cluster) |
+| MCP-2 | verify-gated | needs live codex static-bearer-header check; cannot run headless |
+| STATE-7, FE-6 | deferred | large/strategic — explicit go decision required |
+
+Tests: 42 → 97 passing (`unittest`). The three large mechanical refactors (SRV-2,
+MCP-3, FE-3) used a `tokenize`-based renamer to avoid corrupting strings/comments.
 
 ## How to read this
 
