@@ -1,11 +1,11 @@
 """Agent wrapper - runs the real interactive CLI with auto-trigger on @mentions.
 
 Usage:
-    python wrapper.py claude
-    python wrapper.py codex
-    python wrapper.py gemini
-    python wrapper.py kimi
-    python wrapper.py qwen
+    python bin/wrapper.py claude
+    python bin/wrapper.py codex
+    python bin/wrapper.py gemini
+    python bin/wrapper.py kimi
+    python bin/wrapper.py qwen
 
 Cross-platform:
   - Windows: injects keystrokes via Win32 WriteConsoleInput (wrapper_windows.py)
@@ -26,10 +26,11 @@ import threading
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent  # bin/wrapper.py -> repo root
+sys.path.insert(0, str(ROOT))
+
 from src.wrapper.identity import Identity, handle_heartbeat_409
 from src.wrapper.server_client import ServerClient
-
-ROOT = Path(__file__).parent
 
 from src.mcp.mcp_inject import (
     _apply_mcp_inject,

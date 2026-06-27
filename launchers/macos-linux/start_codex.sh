@@ -50,7 +50,7 @@ if ! is_server_running; then
     # New shells spawned via osascript / gnome-terminal / xterm do not
     # inherit AGENTCHATTR_* from this process, so pass server settings as
     # explicit run.py flags instead of relying on env propagation.
-    server_cmd=".venv/bin/python run.py"
+    server_cmd=".venv/bin/python bin/run.py"
     [ -n "$AGENTCHATTR_DATA_DIR" ]      && server_cmd="$server_cmd --data-dir $(shell_quote "$AGENTCHATTR_DATA_DIR")"
     [ -n "$AGENTCHATTR_PORT" ]          && server_cmd="$server_cmd --port $(shell_quote "$AGENTCHATTR_PORT")"
     [ -n "$AGENTCHATTR_MCP_HTTP_PORT" ] && server_cmd="$server_cmd --mcp-http-port $(shell_quote "$AGENTCHATTR_MCP_HTTP_PORT")"
@@ -78,4 +78,4 @@ if ! is_server_running; then
     done
 fi
 
-.venv/bin/python wrapper.py codex "$@"
+.venv/bin/python bin/wrapper.py codex "$@"

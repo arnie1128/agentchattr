@@ -42,7 +42,7 @@ REM so the child sees them without us having to quote-pass them on the
 REM command line (which would need escaping for paths with batch metachars).
 netstat -ano | findstr /C:":%AGENTCHATTR_CHECK_PORT% " | findstr LISTENING >nul 2>&1
 if %errorlevel% neq 0 (
-    start "agentchattr server" cmd /c "python run.py"
+    start "agentchattr server" cmd /c "python bin/run.py"
 )
 :wait_server
 netstat -ano | findstr /C:":%AGENTCHATTR_CHECK_PORT% " | findstr LISTENING >nul 2>&1
@@ -51,7 +51,7 @@ if %errorlevel% neq 0 (
     goto :wait_server
 )
 
-python wrapper.py gemini %*
+python bin/wrapper.py gemini %*
 if %errorlevel% neq 0 (
     echo.
     echo   Agent exited unexpectedly. Check the output above.

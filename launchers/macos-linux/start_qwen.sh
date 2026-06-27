@@ -40,14 +40,14 @@ ensure_venv
 
 if ! is_server_running; then
     if [ "$(uname -s)" = "Darwin" ]; then
-        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python run.py\"" > /dev/null 2>&1
+        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python bin/run.py\"" > /dev/null 2>&1
     else
         if command -v gnome-terminal >/dev/null 2>&1; then
-            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python run.py; printf 'Press Enter to close... '; read _"
+            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python bin/run.py; printf 'Press Enter to close... '; read _"
         elif command -v xterm >/dev/null 2>&1; then
-            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python run.py" &
+            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python bin/run.py" &
         else
-            .venv/bin/python run.py > data/server.log 2>&1 &
+            .venv/bin/python bin/run.py > data/server.log 2>&1 &
         fi
     fi
 
@@ -61,4 +61,4 @@ if ! is_server_running; then
     done
 fi
 
-.venv/bin/python wrapper.py qwen -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow."
+.venv/bin/python bin/wrapper.py qwen -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow."

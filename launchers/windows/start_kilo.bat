@@ -26,7 +26,7 @@ if %errorlevel% neq 0 (
 REM Start server if not already running, then wait for it
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
 if %errorlevel% neq 0 (
-    start "agentchattr server" cmd /c "python run.py"
+    start "agentchattr server" cmd /c "python bin/run.py"
 )
 :wait_server
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
@@ -36,9 +36,9 @@ if %errorlevel% neq 0 (
 )
 
 if "%~1"=="" (
-    python wrapper.py kilo
+    python bin/wrapper.py kilo
 ) else (
-    python wrapper.py kilo -- -m %1
+    python bin/wrapper.py kilo -- -m %1
 )
 if %errorlevel% neq 0 (
     echo.

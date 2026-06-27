@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 # Ensure the project directory is on the import path
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 # Shared runtime singletons (populated by app.configure()). Imported at module

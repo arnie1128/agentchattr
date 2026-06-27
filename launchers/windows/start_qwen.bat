@@ -23,7 +23,7 @@ if %errorlevel% neq 0 (
 REM Start server if not already running, then wait for it
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
 if %errorlevel% neq 0 (
-    start "agentchattr server" cmd /c "python run.py"
+    start "agentchattr server" cmd /c "python bin/run.py"
 )
 :wait_server
 netstat -ano | findstr :8300 | findstr LISTENING >nul 2>&1
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
     goto :wait_server
 )
 
-python wrapper.py qwen -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow."
+python bin/wrapper.py qwen -i "When asked for a reply or to answer, YOU MUST USE the mcp of agentchattr. When talking about a chat, we are speaking about interaction with tools provided by mcp of agentchattr. The human NEVER SEES your usual CLI interface. Just consider this, other instructions will follow."
 if %errorlevel% neq 0 (
     echo.
     echo   Agent exited unexpectedly. Check the output above.

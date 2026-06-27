@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 VERSION = (ROOT / "VERSION").read_text().strip()
 OUT_NAME = f"agentchattr-{VERSION}"
 
@@ -17,9 +17,6 @@ OUT_NAME = f"agentchattr-{VERSION}"
 # Library modules live under the agentchattr/ package (an INCLUDE_DIR); only the
 # root entry scripts are listed here individually.
 INCLUDE_FILES = [
-    "run.py",
-    "wrapper.py",
-    "wrapper_api.py",
     "open_chat.html",
     "requirements.txt",
     "README.md",
@@ -29,6 +26,7 @@ INCLUDE_FILES = [
 
 INCLUDE_DIRS = [
     "src",
+    "bin",
     "config",
     "static",
     "assets",

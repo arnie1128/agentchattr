@@ -1,8 +1,8 @@
 """API agent wrapper — bridges the chat room to an OpenAI-compatible endpoint.
 
 Usage:
-    python wrapper_api.py qwen
-    python wrapper_api.py my-local-model
+    python bin/wrapper_api.py qwen
+    python bin/wrapper_api.py my-local-model
 
 For local models (Ollama, llama-server, LM Studio, etc.) that expose an
 OpenAI-compatible /v1/chat/completions endpoint but have no CLI to inject
@@ -28,10 +28,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent  # bin/wrapper_api.py -> repo root
+sys.path.insert(0, str(ROOT))
+
 from src.wrapper.identity import Identity, handle_heartbeat_409
 from src.wrapper.server_client import ServerClient
-
-ROOT = Path(__file__).parent
 
 
 def main():
@@ -50,7 +51,7 @@ def main():
         print("  To add one, copy the example config:")
         print("    cp config/config.local.toml.example config/config.local.toml")
         print("  Then uncomment and edit an [agents.NAME] section (set type = \"api\").")
-        print("  Finally: python wrapper_api.py <name>")
+        print("  Finally: python bin/wrapper_api.py <name>")
         sys.exit(1)
 
     parser = argparse.ArgumentParser(description="API agent wrapper for OpenAI-compatible endpoints")
@@ -100,7 +101,7 @@ def main():
         registration = client.register(agent, args.label)
     except Exception as exc:
         print(f"  Registration failed ({exc}).")
-        print("  Is the server running? Start it with: python run.py")
+        print("  Is the server running? Start it with: python bin/run.py")
         sys.exit(1)
 
     name = registration["name"]

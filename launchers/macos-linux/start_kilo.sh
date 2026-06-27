@@ -43,14 +43,14 @@ ensure_venv
 
 if ! is_server_running; then
     if [ "$(uname -s)" = "Darwin" ]; then
-        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python run.py\"" > /dev/null 2>&1
+        osascript -e "tell app \"Terminal\" to do script \"cd '$(pwd)' && .venv/bin/python bin/run.py\"" > /dev/null 2>&1
     else
         if command -v gnome-terminal >/dev/null 2>&1; then
-            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python run.py; printf 'Press Enter to close... '; read _"
+            gnome-terminal -- sh -c "cd '$(pwd)' && .venv/bin/python bin/run.py; printf 'Press Enter to close... '; read _"
         elif command -v xterm >/dev/null 2>&1; then
-            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python run.py" &
+            xterm -e sh -c "cd '$(pwd)' && .venv/bin/python bin/run.py" &
         else
-            .venv/bin/python run.py > data/server.log 2>&1 &
+            .venv/bin/python bin/run.py > data/server.log 2>&1 &
         fi
     fi
 
@@ -65,7 +65,7 @@ if ! is_server_running; then
 fi
 
 if [ -n "$1" ]; then
-    .venv/bin/python wrapper.py kilo -- -m "$1"
+    .venv/bin/python bin/wrapper.py kilo -- -m "$1"
 else
-    .venv/bin/python wrapper.py kilo
+    .venv/bin/python bin/wrapper.py kilo
 fi

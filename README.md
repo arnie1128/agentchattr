@@ -374,10 +374,10 @@ launchers\windows\start.bat
 ./launchers/macos-linux/start.sh
 
 # Terminal 2 — agent wrapper (any platform)
-python wrapper.py claude
+python bin/wrapper.py claude
 
 # With auto-approve (flags pass through after --)
-python wrapper.py claude -- --dangerously-skip-permissions
+python bin/wrapper.py claude -- --dangerously-skip-permissions
 ```
 
 ### Configuration
@@ -447,18 +447,18 @@ sse_port = 8201             # MCP SSE transport (Gemini)
 
 If you keep one agentchattr install shared across several repos (e.g. via dotfiles), you can run an isolated instance per project without editing `config.toml` — override the data directory and ports at launch time.
 
-**CLI flags** (accepted by `run.py`, `wrapper.py`, and `wrapper_api.py`):
+**CLI flags** (accepted by `bin/run.py`, `bin/wrapper.py`, and `bin/wrapper_api.py`):
 
 ```bash
 # Start the server for project A
-python run.py \
+python bin/run.py \
   --data-dir ./project-a/.agentchattr \
   --port 8310 \
   --mcp-http-port 8210 \
   --mcp-sse-port 8211
 
 # Launch a wrapper that connects to that same instance
-python wrapper.py claude \
+python bin/wrapper.py claude \
   --data-dir ./project-a/.agentchattr \
   --port 8310 \
   --mcp-http-port 8210 \
@@ -507,7 +507,7 @@ Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM 
    ./launchers/macos-linux/start_api_agent.sh qwen
 
    # Or directly
-   python wrapper_api.py qwen
+   python bin/wrapper_api.py qwen
    ```
 
 The wrapper registers with the server, watches for @mentions, reads recent chat context, calls your model's `/v1/chat/completions` endpoint, and posts the response back. `config.local.toml` is gitignored so your local endpoints stay out of the repo.
@@ -532,7 +532,7 @@ The wrapper registers with the server, watches for @mentions, reads recent chat 
    sh launchers/macos-linux/start_minimax.sh
 
    # Or directly
-   python wrapper_api.py minimax
+   python bin/wrapper_api.py minimax
    ```
 
 Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `MiniMax-M2.5`, `MiniMax-M2.5-highspeed`. China mainland users can change `base_url` to `https://api.minimaxi.com/v1` in `config.toml`.
@@ -560,13 +560,13 @@ Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `
 ```
 
 **Key files:** Library modules live under the `src/` package (subpackages
-`core`, `state`, `storage`, `session`, `mcp`, `server`, `wrapper`); the entry
-scripts (`run.py`, `wrapper.py`, `wrapper_api.py`, `build_release.py`) stay at the
-repo root.
+`core`, `state`, `storage`, `session`, `mcp`, `server`, `wrapper`); the runtime
+entry scripts live under `bin/` (`run.py`, `wrapper.py`, `wrapper_api.py`) and
+the release builder under `tools/build_release.py`.
 
 | File | Purpose |
 |------|---------|
-| `run.py` | Entry point — starts MCP + web server |
+| `bin/run.py` | Entry point — starts MCP + web server |
 | `src/server/app.py` | FastAPI WebSocket server, REST endpoints, registration API, security middleware |
 | `src/storage/store.py` | JSONL message persistence with observer callbacks |
 | `src/server/registry.py` | Runtime agent registry — slot assignment, identity claims, rename tracking |
@@ -580,7 +580,7 @@ repo root.
 | `src/server/router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
 | `src/server/agents.py` | Writes trigger queue files for wrapper to pick up |
 | `src/mcp/mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |
-| `wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
+| `bin/wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
 | `src/wrapper/windows.py` | Windows: keystroke injection + screen buffer activity detection |
 | `src/wrapper/unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
 | `config.toml` | All configuration (agents, ports, routing) |

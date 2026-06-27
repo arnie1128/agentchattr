@@ -131,4 +131,4 @@ max_size_mb = 10
 #   # api_key_env = "MY_API_KEY"     # optional: env var name for API key
 #   # system_prompt = "You are ..."   # optional: custom system prompt
 #
-# Then run: python wrapper_api.py qwen
+# Then run: python bin/wrapper_api.py qwen

@@ -1,6 +1,6 @@
 # Windows launchers
 
-Per-agent `.bat` wrappers that start the agentchattr server (if not already running) and launch an agent CLI under `python wrapper.py`. Companion shell scripts live in `../macos-linux/`.
+Per-agent `.bat` wrappers that start the agentchattr server (if not already running) and launch an agent CLI under `python bin/wrapper.py`. Companion shell scripts live in `../macos-linux/`.
 
 When invoked through a project wrapper (`instance-template/start_<agent>.cmd`), the chain is:
 
