@@ -45,7 +45,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
 | FE-2 | P2 | partial -> real-machine phase | `47a9895` `escapeHtml` extracted; the rest depends on FE-3 -> follows FE-3 into the real-machine phase (#78) |
-| FE-3 | P2 | partial -> real-machine phase | `9214916` `activeChannel` single-owner. The remaining 7-key Store migration (~100 cross-module edits over chat.js + 4 siblings) is **re-sequenced to the real-machine phase (#78)** — no JS test net, blind syntax-only edits would risk silent UI breakage |
+| FE-3 | P2 | **done (code) — RM-6 runtime verify pending** | `33b91d7`..`2f1d411` (12 commits). All 7 keys (channelUnread/channelList/_lastMentionedAgent/soundEnabled/rules/username/agentConfig) migrated to Store as single owner; 4 siblings (channels/jobs/sessions/rules-panel) repointed to `Store.get`/`Store.set`; the 7 `window.*` bridges deleted. Static net: `node --check` × 10 + grep-completeness (0 bare refs in chat.js, 0 `window.<key>` across static/). `activeChannel` keeps its shim per the documented exception. Runtime UI verification folded into RM-6 (no JS behavior-test net) |
 | FE-4 | P3 | done | inbound `onmessage` → `Hub.emit` only (chat.js:379-384) |
 | FE-5 | P3 | done | `appendMessage` → `_messageRenderers` registry |
 | FE-6 | P1 | -> real-machine phase | **DECISION: do**, after FE-3, in the real-machine phase (#78) — message-model rewrite needs runtime verification |
@@ -96,7 +96,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
 | FE-2 | Do (real-machine #78) | follows FE-3 |
-| FE-3 | Do (real-machine #78) | keystone; ~100 cross-module edits, no JS test net -> verify on real machine |
+| FE-3 | **Done (code); RM-6 verify** | 12 commits; 7 keys → Store, 4 siblings repointed, 7 bridges dropped; static-verified, UI verify in RM-6 |
 | FE-4 | Done | onmessage -> Hub.emit |
 | FE-5 | Done | _messageRenderers registry |
 | FE-6 | Do (real-machine #78) | real defect; message model, runtime-verified |
@@ -413,8 +413,10 @@ Only `escapeHtml` is extracted (format.js:10-15). The other five still live in c
 - **Fix scope (修正範圍):** ~4 functions, ~150 lines, into a leaf module loaded before the panels; repoint chat.js:730-733. Blocked on FE-3.
 - **Completion criteria (達成條件):** `grep 'function getColor|function renderMarkdown|function resolveAgent|function getAvatarSvg' static/chat.js` → 0; those functions defined in a leaf module loaded before the panels; the app loads with no `ReferenceError` (siblings still resolve them).
 
-#### FE-3 — make Store the single owner of cross-module state (P2, partial)
+#### FE-3 — make Store the single owner of cross-module state (P2, done — RM-6 verify pending)
 **Decision (定案):** **Do (Batch 4) — the keystone frontend refactor.** Make Store the single owner of the 7 cross-module keys, one key per commit. Unblocks FE-2, FE-6 Tier-B, and NEW-FE-chatjs-split Tier-B. Highest frontend leverage after FE-1.
+
+**Status — DONE (code), `33b91d7`..`2f1d411` (12 commits):** End-state B reached — Store is the single *access path*, not merely the single storage owner. Sequence: (1) 7 per-key commits moved each `let` + bridge-getter onto Store and converted chat.js internal bare refs to `Store.get`/`Store.set`; (2) 4 per-sibling commits repointed channels.js/jobs.js/sessions.js/rules-panel.js off `window.<key>` onto `Store.get`/`Store.set` (rules-panel's read-snapshot-then-mutate and channels' in-place `channelUnread` mutation preserved; `applyAgentConfig` switched to build-local-then-`Store.set` for an atomic swap); (3) one commit deleted the 7 `window.*` bridges after grep-confirming 0 external consumers. **Deviation from the per-key criterion below:** `activeChannel` keeps its window getter (documented exception) and `autoScroll`'s shim stays (out of FE-3 scope — no cross-module reader). **Verification:** `node --check` × 10 JS files + grep-completeness (0 bare `<key>` refs in chat.js beyond `Store.get/set`/seed/comment; 0 `window.<7keys>` across `static/`). No JS behavior-test net exists, so runtime UI confirmation is folded into RM-6 (#84).
 
 `activeChannel` is the one migrated single-owner (chat.js:23/34/37/39, no backing `let`; writers go through Store). The other state is still chat.js `let` + `defineProperty` bridges (33-51), with cross-module poking: rules-panel.js:104 `window.rules = rules.filter(...)` (reassign via setter, **not** `.push`), channels.js reads `window.channelList`/`channelUnread`, jobs.js reads `window.agentConfig` and mutates `window._lastMentionedAgent`. **Scope correction:** `baseColors`/`agentHats`/`colorOverrides` are chat.js-private `let`s (no bridge, no cross-module reader) and `autoScroll`'s bridge has no cross-module reader — these 4 are NOT FE-3 targets (`baseColors`/`agentHats` fold into FE-2's leaf move). The true cross-module bridged set is **7 keys**.
 - **Approach (方案):** finish the migration Store was built for — move each remaining CROSS-MODULE global into Store (set+watch), repoint cross-module readers to `Store.get` and writers to `Store.set`, then delete that key's `defineProperty` bridge. Same per-key pattern proven on `activeChannel`. `ws`/`SESSION_TOKEN` stay as non-state shims.
