@@ -38,7 +38,7 @@ function renderChannelTabs() {
     const existingCreate = container.querySelector('.channel-inline-create');
     container.innerHTML = '';
 
-    for (const name of window.channelList) {
+    for (const name of Store.get('channelList')) {
         const tab = document.createElement('button');
         tab.className = 'channel-tab' + (name === window.activeChannel ? ' active' : '');
         tab.dataset.channel = name;
@@ -48,7 +48,7 @@ function renderChannelTabs() {
         label.textContent = '# ' + name;
         tab.appendChild(label);
 
-        const unread = window.channelUnread[name] || 0;
+        const unread = Store.get('channelUnread')[name] || 0;
         if (unread > 0 && name !== window.activeChannel) {
             const dot = document.createElement('span');
             dot.className = 'channel-unread-dot';
@@ -101,7 +101,7 @@ function renderChannelTabs() {
     // Update add button disabled state
     const addBtn = document.getElementById('channel-add-btn');
     if (addBtn) {
-        addBtn.classList.toggle('disabled', window.channelList.length >= 8);
+        addBtn.classList.toggle('disabled', Store.get('channelList').length >= 8);
     }
 
     renderChannelSidebar();
@@ -119,7 +119,7 @@ function renderChannelSidebar() {
     const existingCreate = list.querySelector('.channel-inline-create');
     list.innerHTML = '';
 
-    for (const name of window.channelList) {
+    for (const name of Store.get('channelList')) {
         const row = document.createElement('button');
         row.className = 'channel-sidebar-row' + (name === window.activeChannel ? ' active' : '');
         row.dataset.channel = name;
@@ -129,7 +129,7 @@ function renderChannelSidebar() {
         label.textContent = '# ' + name;
         row.appendChild(label);
 
-        const unread = window.channelUnread[name] || 0;
+        const unread = Store.get('channelUnread')[name] || 0;
         if (unread > 0 && name !== window.activeChannel) {
             const dot = document.createElement('span');
             dot.className = 'channel-sidebar-row-unread';
@@ -168,7 +168,7 @@ function renderChannelSidebar() {
 
     const addBtn = document.getElementById('channel-sidebar-add');
     if (addBtn) {
-        addBtn.classList.toggle('disabled', window.channelList.length >= 8);
+        addBtn.classList.toggle('disabled', Store.get('channelList').length >= 8);
     }
 }
 
@@ -294,7 +294,7 @@ function switchChannel(name) {
     const topId = _getTopVisibleMsgId();
     if (topId) _channelScrollMsg[window.activeChannel] = topId;
     window._setActiveChannel(name);
-    window.channelUnread[name] = 0;
+    Store.get('channelUnread')[name] = 0;
     filterMessagesByChannel();
     renderChannelTabs();
     // Restore: scroll to saved message, or bottom if none saved
@@ -321,7 +321,7 @@ function filterMessagesByChannel() {
 // ---------------------------------------------------------------------------
 
 function showChannelCreateDialog() {
-    if (window.channelList.length >= 8) return;
+    if (Store.get('channelList').length >= 8) return;
     // Route the inline create into the sidebar list when sidebar mode is on,
     // otherwise into the top-bar tabs — keeps the input visible either way.
     const inSidebar = document.body.classList.contains('channels-in-sidebar');
@@ -382,7 +382,7 @@ function showChannelCreateDialog() {
 function _submitInlineCreate(input, wrapper) {
     const name = input.value.trim().toLowerCase();
     if (!name || !/^[a-z0-9][a-z0-9\-]{0,19}$/.test(name)) return;
-    if (window.channelList.includes(name)) { input.focus(); return; }
+    if (Store.get('channelList').includes(name)) { input.focus(); return; }
     window._setPendingChannelSwitch(name);
     wsClient.send('channel_create', { name });
     wrapper.remove();
