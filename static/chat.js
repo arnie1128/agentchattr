@@ -8,7 +8,7 @@ let ws = null;
 let pendingAttachments = [];
 let autoScroll = true;
 let reconnectTimer = null;
-let username = 'user';
+Store.set('username', 'user');  // single owner is Store (FE-3)
 let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
 let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
 let todos = {};  // { msg_id: "todo" | "done" }
@@ -39,7 +39,7 @@ window._setActiveChannel = function(v) { Store.set('activeChannel', v); };
 Store.watch('activeChannel', function(v) { try { localStorage.setItem('agentchattr-channel', v); } catch (e) {} });
 window._setPendingChannelSwitch = function(v) { pendingChannelSwitch = v; };
 // scrollToBottom is set after function definition (see below)
-Object.defineProperty(window, 'username', { get() { return username; } });
+Object.defineProperty(window, 'username', { get() { return Store.get('username'); } });
 Object.defineProperty(window, 'agentConfig', { get() { return agentConfig; } });
 Object.defineProperty(window, 'ws', { get() { return ws; } });
 Object.defineProperty(window, 'soundEnabled', { get() { return Store.get('soundEnabled'); } });
@@ -478,7 +478,7 @@ function appendMessage(msg) {
             _cu[msgChannel] = (_cu[msgChannel] || 0) + 1;
             renderChannelTabs();
             // Play soft pluck for cross-channel chat messages from others (only when focused)
-            if (document.hasFocus() && msg.type === 'chat' && msg.sender && msg.sender.toLowerCase() !== username.toLowerCase()) {
+            if (document.hasFocus() && msg.type === 'chat' && msg.sender && msg.sender.toLowerCase() !== Store.get('username').toLowerCase()) {
                 playCrossChannelSound();
             }
         }
@@ -588,7 +588,7 @@ function _renderChat(el, msg) {
     if (isError) el.classList.add('error-msg');
 
     // Update last mentioned agent if message is from user (Ben)
-    if (msg.sender.toLowerCase() === username.toLowerCase()) {
+    if (msg.sender.toLowerCase() === Store.get('username').toLowerCase()) {
         const mentions = msg.text.match(/@(\w[\w-]*)/g);
         if (mentions) {
             const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
@@ -602,7 +602,7 @@ function _renderChat(el, msg) {
     let textHtml = styleHashtags(renderMarkdown(msg.text));
 
     const senderColor = getColor(msg.sender);
-    const isSelf = msg.sender.toLowerCase() === username.toLowerCase();
+    const isSelf = msg.sender.toLowerCase() === Store.get('username').toLowerCase();
     el.classList.add(isSelf ? 'self' : 'other');
 
     let attachmentsHtml = '';
@@ -1549,9 +1549,9 @@ function applySettings(data) {
         document.title = data.title;
     }
     if (data.username) {
-        username = data.username;
-        document.getElementById('sender-label').textContent = username;
-        document.getElementById('setting-username').value = username;
+        Store.set('username', data.username);
+        document.getElementById('sender-label').textContent = Store.get('username');
+        document.getElementById('setting-username').value = Store.get('username');
     }
     if (data.font) {
         document.body.classList.remove('font-mono', 'font-serif', 'font-sans');
@@ -1645,7 +1645,7 @@ function clearChat() {
     // End Session pattern elsewhere.
     if (btn.classList.contains('confirming')) {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            wsClient.send('message', { text: '/clear', sender: username, channel: activeChannel });
+            wsClient.send('message', { text: '/clear', sender: Store.get('username'), channel: activeChannel });
         }
         _clearClearChatConfirm();
         document.getElementById('settings-bar').classList.add('hidden');
@@ -1671,7 +1671,7 @@ function clearChat() {
     confirmWrap.querySelector('.ch-confirm-yes').onclick = (e) => {
         e.stopPropagation();
         if (ws && ws.readyState === WebSocket.OPEN) {
-            wsClient.send('message', { text: '/clear', sender: username, channel: activeChannel });
+            wsClient.send('message', { text: '/clear', sender: Store.get('username'), channel: activeChannel });
         }
         _clearClearChatConfirm();
         document.getElementById('settings-bar').classList.add('hidden');
@@ -2192,7 +2192,7 @@ function sendMessage() {
     const payload = {
         type: 'message',
         text: text,
-        sender: username,
+        sender: Store.get('username'),
         channel: activeChannel,
         attachments: pendingAttachments.map(a => ({
             path: a.path,
@@ -3407,7 +3407,7 @@ async function submitSchedulePopover() {
             targets: [...targets],
             channel: activeChannel,
             spec: spec,
-            created_by: username,
+            created_by: Store.get('username'),
         };
         if (!recurring) body.one_shot = true;
         if (!recurring && dateVal) body.send_at_date = dateVal;
@@ -4015,7 +4015,7 @@ Hub.on('message_update', function (event) {
 
 Hub.on('message', function (event) {
     // Play notification sound for new messages from others (not joins, not when focused)
-    if (Store.get('soundEnabled') && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
+    if (Store.get('soundEnabled') && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== Store.get('username').toLowerCase()) {
         playNotificationSound(event.data.sender);
     }
     appendMessage(event.data);
