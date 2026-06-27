@@ -28,27 +28,20 @@ window.customRoles = [];  // saved custom roles from settings
 let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
 let schedulesList = [];  // array of schedule objects from server
 
-// Expose globals that extracted modules (sessions.js, jobs.js) read via window.*
-// Using defineProperty so live values are always returned.
+// Expose the remaining non-state shims that extracted modules read via window.*
+// (SESSION_TOKEN/ws/autoScroll are live chat.js locals). The 7 cross-module
+// state keys are now owned by Store (FE-3) — siblings read them via Store.get
+// and write via Store.set, so their window bridges are gone. activeChannel
+// keeps a window getter as a convenience shim; Store is still its single owner.
 Object.defineProperty(window, 'SESSION_TOKEN', { get() { return SESSION_TOKEN; } });
 Object.defineProperty(window, 'activeChannel', { get() { return Store.get('activeChannel'); } });
-Object.defineProperty(window, 'channelList', { get() { return Store.get('channelList'); }, set(v) { Store.set('channelList', v); } });
-Object.defineProperty(window, 'channelUnread', { get() { return Store.get('channelUnread'); }, set(v) { Store.set('channelUnread', v); } });
 window._setActiveChannel = function(v) { Store.set('activeChannel', v); };
 // Persist activeChannel changes in one place — Store is the single owner.
 Store.watch('activeChannel', function(v) { try { localStorage.setItem('agentchattr-channel', v); } catch (e) {} });
 window._setPendingChannelSwitch = function(v) { pendingChannelSwitch = v; };
 // scrollToBottom is set after function definition (see below)
-Object.defineProperty(window, 'username', { get() { return Store.get('username'); } });
-Object.defineProperty(window, 'agentConfig', { get() { return Store.get('agentConfig'); } });
 Object.defineProperty(window, 'ws', { get() { return ws; } });
-Object.defineProperty(window, 'soundEnabled', { get() { return Store.get('soundEnabled'); } });
-Object.defineProperty(window, 'rules', { get() { return Store.get('rules'); }, set(v) { Store.set('rules', v); } });
 Object.defineProperty(window, 'autoScroll', { get() { return autoScroll; } });
-Object.defineProperty(window, '_lastMentionedAgent', {
-    get() { return Store.get('_lastMentionedAgent'); },
-    set(v) { Store.set('_lastMentionedAgent', v); },
-});
 
 // --- Drag-scroll for overflow containers ---
 function enableDragScroll(el) {
