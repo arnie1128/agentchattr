@@ -23,7 +23,8 @@ from router import Router
 from agents import AgentTrigger
 from registry import RuntimeRegistry
 from session_store import SessionStore
-from session_engine import SessionEngine
+from session_engine import SessionEngine, auto_cast
+from version_check import check as run_version_check
 
 import commands
 import mcp_state
@@ -1782,7 +1783,7 @@ async def start_session(request: Request):
     if not cast:
         online = state.registry.get_active_names() if state.registry else []
         roles = tmpl.get("roles", [])
-        cast = _auto_cast(roles, online, started_by)
+        cast = auto_cast(roles, online, started_by)
         if not cast:
             return JSONResponse(
                 {"error": "not enough agents online to fill all roles"},
@@ -1887,133 +1888,13 @@ async def delete_session_template(template_id: str):
     return JSONResponse({"ok": True, "template_id": template_id})
 
 
-def _auto_cast(roles: list[str], online_agents: list[str], started_by: str) -> dict:
-    """Auto-assign roles to available agents. Returns empty dict if not enough agents."""
-    cast = {}
-    available = list(online_agents)
-
-    for role in roles:
-        if not available:
-            # Reuse agents if we run out (one agent, multiple roles)
-            available = list(online_agents)
-        if not available:
-            return {}
-        agent = available.pop(0)
-        cast[role] = agent
-
-    return cast
-
-
-# --- Version check (GitHub release notifier) ---
-
-_version_cache: dict = {"data": None, "fetched_at": 0.0}
-_VERSION_CACHE_TTL = 1800  # 30 minutes
-
-
-def _read_local_version() -> str:
-    """Read version from VERSION file in project root."""
-    vfile = Path(__file__).parent / "VERSION"
-    try:
-        return vfile.read_text().strip()
-    except Exception:
-        return ""
-
-
-def _detect_install_kind() -> str:
-    """Detect how this copy was installed: official_git, fork, or unknown."""
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=5,
-            cwd=Path(__file__).parent,
-        )
-        url = result.stdout.strip().lower()
-        if "bcurts/agentchattr" in url:
-            return "official_git"
-        elif url:
-            return "fork"
-    except Exception:
-        pass
-    return "unknown"
-
-
-def _fetch_latest_release() -> dict | None:
-    """Fetch latest release from GitHub API, with 30-min cache."""
-    import time
-    import urllib.request
-
-    now = time.time()
-    if _version_cache["data"] and (now - _version_cache["fetched_at"]) < _VERSION_CACHE_TTL:
-        return _version_cache["data"]
-
-    try:
-        req = urllib.request.Request(
-            "https://api.github.com/repos/bcurts/agentchattr/releases/latest",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "agentchattr"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-            result = {
-                "tag": data.get("tag_name", ""),
-                "url": data.get("html_url", ""),
-            }
-            _version_cache["data"] = result
-            _version_cache["fetched_at"] = now
-            return result
-    except Exception:
-        return _version_cache.get("data")
-
-
-def _compare_versions(current: str, latest_tag: str) -> str:
-    """Compare version strings. Returns 'behind', 'current', or 'unknown'."""
-    # Strip leading 'v' from tag
-    latest = latest_tag.lstrip("v")
-    if not current or not latest:
-        return "unknown"
-    try:
-        from packaging.version import Version
-        if Version(current) < Version(latest):
-            return "behind"
-        return "current"
-    except Exception:
-        return "unknown"
-
+# --- Version check (GitHub release notifier) — logic lives in version_check.py (SRV-8) ---
 
 @app.get("/api/version_check")
 async def version_check():
     """Check for newer releases on GitHub."""
-    current = _read_local_version()
     loop = asyncio.get_event_loop()
-    release = await loop.run_in_executor(None, _fetch_latest_release)
-
-    if not release or not release.get("tag"):
-        return JSONResponse({"current": current, "latest": "", "state": "unknown", "url": ""})
-
-    latest_tag = release["tag"]
-    install_kind = _detect_install_kind()
-    comparison = _compare_versions(current, latest_tag)
-
-    # Local result var renamed off `state` so it can't shadow the app_state
-    # singleton imported module-wide (NEW-SRV-3); the JSON key stays "state".
-    if comparison == "behind":
-        if install_kind == "official_git":
-            release_state = "update_available"
-        elif install_kind == "fork":
-            release_state = "upstream_update"
-        else:
-            release_state = "unknown"
-    elif comparison == "current":
-        release_state = "current"
-    else:
-        release_state = "unknown"
-
-    return JSONResponse({
-        "current": current,
-        "latest": latest_tag,
-        "state": release_state,
-        "url": release.get("url", ""),
-    })
+    return JSONResponse(await loop.run_in_executor(None, run_version_check))
 
 
 @app.get("/uploads/{filename}")

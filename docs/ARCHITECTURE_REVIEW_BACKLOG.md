@@ -15,7 +15,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | SRV-5 | P2 | **done** | `_finish_agent_rename(broadcast=)` unifies 3 rename sites (migrate_identity once); `_trigger_targets` unifies the 2 fully-gated trigger loops; `trigger_agent_silent` kept inline (minimal, distinct resolution) |
 | SRV-6 | P2 | done | `settings_store.py` `SettingsStore`+`HatStore` (lock + validated `update`) |
 | SRV-7 | P3 | **done** | `presence_monitor.py` + `schedule_runner.py` extracted (tick+run, explicit deps); reaper orchestration now unit-tested; FS-migration flag descoped (idempotent no-op) |
-| SRV-8 | P3 | open | version-check + `_auto_cast` still inline (hats sub-item already done by SRV-6) |
+| SRV-8 | P3 | **done** | `version_check.py` (pure logic + `check()`; app.py keeps a thin route); `_auto_cast` → `session_engine.auto_cast`; ~127 lines out of app.py |
 | BUG-1 / STATE-2 | P1 | done | `640b396` locked compare-and-advance + stale-snapshot reject (session_engine.py:287-294) |
 | NEW-SRV-1 | P1 | **done** | fix `state.session_token` (app.py:757) + `/ws`-connect smoke test (test_ws_connect.py) |
 | NEW-SRV-6 | P1 | **done** | (found in B0 exec) `agents.py` imported is_online/is_active/get_role from mcp_bridge (moved to mcp_state by MCP-3) → ImportError in every `broadcast_status`; repointed to mcp_state |
@@ -66,7 +66,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | SRV-5 | Done (B3) | rename helper + _trigger_targets; silent loop kept (semantically distinct) |
 | SRV-6 | Done | settings_store/hats lock-guarded |
 | SRV-7 | Done (B1) | presence_monitor + schedule_runner extracted + orchestration tested |
-| SRV-8 | Do (B4) | low-risk leaf extraction |
+| SRV-8 | Done (B4) | version_check.py + session_engine.auto_cast; +tests |
 | BUG-1 / STATE-2 | Done | locked compare-and-advance |
 | NEW-SRV-1 | Done (B0) | fixed: state.session_token + /ws smoke test |
 | NEW-SRV-6 | Done (B0) | fixed: agents.py repointed to mcp_state (was ImportError in broadcast_status) |
@@ -207,7 +207,7 @@ Confirmed done. `settings_store.py` `SettingsStore`/`HatStore` own their dict + 
 - **Completion criteria (達成條件):** `presence_monitor.py` and `schedule_runner.py` exist with unit tests exercising crash-timeout / leave-debounce and run-due without booting FastAPI; `grep -nE 'def _background_checks|def _schedule_runner' app.py` → 0.
 - **Done — execution note:** `presence_monitor.py` (`tick` + `run`) and `schedule_runner.py` (`tick` + `run`) extracted; `configure()` now just starts two daemon threads, passing the live `_event_loop` / `_last_active_channel` via getters and `broadcast_status`/`_broadcast` as deps. `tick` mirrors the old closure body line-for-line (the deliberate double status-broadcast preserved). Tests: +`test_presence_monitor` (4: recovery-flag drain, crash-timeout, leave-debounce, back-online) +`test_schedule_runner` (4) — the reaper orchestration finally has coverage. `grep def _background_checks|def _schedule_runner app.py` → 0. **FS-migration flag sub-item descoped (judgment):** the legacy renames are already `if legacy.exists()` idempotent no-ops, so in a temp-dir test they do nothing and do NOT block testing; a separate flag would add ceremony without value. Left in place.
 
-#### SRV-8 — self-contained leaves (version-check, `_auto_cast`) still inline (P3, open)
+#### SRV-8 — self-contained leaves (version-check, `_auto_cast`) still inline (P3, done)
 **Decision (定案):** **Do (Batch 4).** Low-risk leaf extraction (version_check.py; _auto_cast -> session_engine). The hats sub-item is already satisfied by SRV-6 and is dropped.
 
 The hats-persistence sub-item is **already satisfied by SRV-6** (HatStore owns `hats.json`) and is dropped from this item. Still inline: the GitHub version-check block — `_detect_install_kind` (2063), `_fetch_latest_release` (2082), `_compare_versions` (2109), `version_check` route (2125-2155), ~105 lines of network/subprocess/packaging logic with no ties to chat state; and `_auto_cast` (2031, a pure role→agent assignment) called once at app.py:1926. No `version_check.py` exists. `set_agent_hat`/`clear_agent_hat` legitimately stay (need the event loop for broadcast).

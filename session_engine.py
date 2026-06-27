@@ -23,6 +23,23 @@ _SESSION_DRAFT_RE = re.compile(r'```session\s*\n(.*?)\n```', re.DOTALL)
 _DRAFT_REF_RE = re.compile(r'\[([a-f0-9]{8})\]')
 
 
+def auto_cast(roles: list[str], online_agents: list[str], started_by: str) -> dict:
+    """Auto-assign roles to available agents (SRV-8, moved from app.py).
+
+    Returns a {role: agent} mapping, reusing agents round-robin when there are
+    more roles than agents; returns {} if no agents are available at all.
+    """
+    cast = {}
+    available = list(online_agents)
+    for role in roles:
+        if not available:
+            available = list(online_agents)  # reuse agents (one agent, many roles)
+        if not available:
+            return {}
+        cast[role] = available.pop(0)
+    return cast
+
+
 class SessionEngine:
     """Orchestrates session turn flow on top of existing chat infrastructure.
 
