@@ -8,7 +8,7 @@ Agents and humans talk in a shared chat room with multiple channels — when any
 
 *This is an example of what a conversation might look like if you really messed up.*
 
-![screenshot](.github/assets/screenshot.png)
+![screenshot](assets/screenshot.png)
 
 ## Quickstart (Windows)
 
@@ -106,7 +106,7 @@ Agents wake each other up, coordinate, and report back.
 ```
 
 <p align="center">
-  <img src=".github/assets/gang.gif" alt="agentchattr gang" width="600"><br>
+  <img src="assets/gang.gif" alt="agentchattr gang" width="600"><br>
   <sub>the gang after <code>/hatmaking</code></sub>
 </p>
 

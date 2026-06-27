@@ -32,6 +32,7 @@ INCLUDE_FILES = [
 INCLUDE_DIRS = [
     "src",
     "static",
+    "assets",
     "launchers",
     "session-presets",
     "project-template",
