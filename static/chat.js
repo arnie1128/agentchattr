@@ -905,6 +905,16 @@ function scrollToBottom() {
 }
 window.scrollToBottom = scrollToBottom;
 window.appendMessage = appendMessage;
+// Explicit exports for the sibling panels (sessions/jobs/channels/rules-panel)
+// that consume these as globals. getColor/renderMarkdown/resolveAgent/
+// getAvatarSvg depend on live agentConfig/colorOverrides, so they stay in
+// chat.js for now — but binding them to window makes the cross-module
+// dependency explicit, so wrapping chat.js in a module won't silently break
+// the panels. (FE-2; the leaf extraction itself waits on FE-3's Store work.)
+window.getColor = getColor;
+window.renderMarkdown = renderMarkdown;
+window.resolveAgent = resolveAgent;
+window.getAvatarSvg = getAvatarSvg;
 
 function updateScrollAnchor() {
     const anchor = document.getElementById('scroll-anchor');
@@ -3216,12 +3226,7 @@ function styleHashtags(html) {
 // --- Helpers ---
 
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-window.escapeHtml = escapeHtml;
+// escapeHtml moved to static/format.js (dependency-free leaf, loaded first).
 
 // --- Schedules strip ---
 
