@@ -1572,35 +1572,8 @@ async def resolve_decision(msg_id: int, request: Request):
     chosen = body.get("choice", "")
     if not chosen:
         return JSONResponse({"error": "choice is required"}, status_code=400)
-    # Atomic check + resolve under lock to prevent double-click race
-    error = None
-    channel = "general"
-    sender = ""
-    with state.store._lock:
-        msg = None
-        for m in state.store._messages:
-            if m["id"] == msg_id:
-                msg = m
-                break
-        if not msg:
-            error = ("message not found", 404)
-        elif msg.get("type") != "decision":
-            error = ("not a decision message", 400)
-        else:
-            meta = msg.get("metadata") or {}
-            if meta.get("resolved"):
-                error = ("already resolved", 400)
-            else:
-                valid_choices = meta.get("choices", [])
-                if valid_choices and chosen not in valid_choices:
-                    error = (f"invalid choice. Valid: {valid_choices}", 400)
-                else:
-                    meta["resolved"] = True
-                    meta["chosen"] = chosen
-                    msg["metadata"] = meta
-                    channel = msg.get("channel", "general")
-                    sender = msg.get("sender", "")
-                    state.store._rewrite()
+    # Atomic check + resolve under the store lock to prevent a double-click race.
+    error, channel, sender = state.store.resolve_decision(msg_id, chosen)
     if error:
         return JSONResponse({"error": error[0]}, status_code=error[1])
     # Post the chosen answer as a regular chat message tagged @sender
@@ -1833,15 +1806,10 @@ async def resolve_job_message(job_id: int, msg_index: int, request: Request):
     """Resolve a suggestion message (accept/dismiss)."""
     body = await request.json()
     resolution = body.get("resolution", "dismissed")
-    job = state.jobs.get(job_id)
-    if not job:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    msgs = job.get("messages", [])
-    if msg_index < 0 or msg_index >= len(msgs):
-        return JSONResponse({"error": "invalid message index"}, status_code=400)
-    msg = msgs[msg_index]
-    msg["resolved"] = resolution
-    state.jobs._save()
+    error, job, msg = state.jobs.resolve_message(job_id, msg_index, resolution)
+    if error:
+        status = 404 if error == "not found" else 400
+        return JSONResponse({"error": error}, status_code=status)
 
     # If accepted, trigger the suggesting agent with context
     if resolution == "accepted" and msg.get("sender"):

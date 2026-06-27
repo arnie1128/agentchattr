@@ -178,6 +178,29 @@ class JobStore:
         self._fire("update", result)
         return result
 
+    def resolve_message(self, job_id: int, msg_index: int, resolution: str):
+        """Mark a job's suggestion message resolved (accepted/dismissed) and persist.
+
+        Returns (error, job, msg): error is None on success, else "not found"
+        or "invalid message index". job/msg are the affected dicts on success so
+        the caller can run follow-up actions (e.g. trigger the suggesting agent).
+        """
+        with self._lock:
+            job = None
+            for a in self._jobs:
+                if a["id"] == job_id:
+                    job = a
+                    break
+            if not job:
+                return "not found", None, None
+            msgs = job.get("messages", [])
+            if msg_index < 0 or msg_index >= len(msgs):
+                return "invalid message index", None, None
+            msg = msgs[msg_index]
+            msg["resolved"] = resolution
+            self._save()
+            return None, job, msg
+
     def update_assignee(self, job_id: int, assignee: str) -> dict | None:
         with self._lock:
             for a in self._jobs:

@@ -114,6 +114,38 @@ class MessageStore:
             f.flush()
             os.fsync(f.fileno())
 
+    def resolve_decision(self, msg_id: int, chosen: str):
+        """Atomically resolve an inline decision card.
+
+        Returns (error, channel, sender). On success error is None, the
+        decision's metadata is marked resolved/chosen, and the log is rewritten;
+        on failure error is (message, http_status). Holding the lock across the
+        check-and-set prevents a double-click race.
+        """
+        with self._lock:
+            msg = None
+            for m in self._messages:
+                if m["id"] == msg_id:
+                    msg = m
+                    break
+            if not msg:
+                return ("message not found", 404), "general", ""
+            if msg.get("type") != "decision":
+                return ("not a decision message", 400), "general", ""
+            meta = msg.get("metadata") or {}
+            if meta.get("resolved"):
+                return ("already resolved", 400), "general", ""
+            valid_choices = meta.get("choices", [])
+            if valid_choices and chosen not in valid_choices:
+                return (f"invalid choice. Valid: {valid_choices}", 400), "general", ""
+            meta["resolved"] = True
+            meta["chosen"] = chosen
+            msg["metadata"] = meta
+            channel = msg.get("channel", "general")
+            sender = msg.get("sender", "")
+            self._rewrite()
+            return None, channel, sender
+
     def get_by_id(self, msg_id: int) -> dict | None:
         with self._lock:
             for m in self._messages:
