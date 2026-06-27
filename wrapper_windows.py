@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+import supervisor
+
 if sys.platform != "win32":
     raise ImportError("wrapper_windows only works on Windows")
 
@@ -465,20 +467,14 @@ def run_agent(command, extra_args, cwd, env, queue_file, agent, no_restart, star
             env = {**env, **inject_env}
         start_watcher(lambda text: inject(text, delay=inject_delay, enter_backend=enter_backend))
 
-        while True:
-            try:
-                proc = subprocess.Popen([command] + extra_args, cwd=cwd, env=env)
-                if pid_holder is not None:
-                    pid_holder[0] = proc.pid
-                proc.wait()
-                if pid_holder is not None:
-                    pid_holder[0] = None
+        def run_once():
+            proc = subprocess.Popen([command] + extra_args, cwd=cwd, env=env)
+            if pid_holder is not None:
+                pid_holder[0] = proc.pid
+            proc.wait()
+            if pid_holder is not None:
+                pid_holder[0] = None
+            # A direct subprocess has no detach concept — it always exited.
+            return True, f"\n  {agent.capitalize()} exited (code {proc.returncode})."
 
-                if no_restart:
-                    break
-
-                print(f"\n  {agent.capitalize()} exited (code {proc.returncode}).")
-                print(f"  Restarting in 3s... (Ctrl+C to quit)")
-                time.sleep(3)
-            except KeyboardInterrupt:
-                break
+        supervisor.run_loop(run_once, no_restart)

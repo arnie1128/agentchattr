@@ -1,6 +1,6 @@
 # Architecture review — backlog
 
-Status: **in progress** — Batches 0–3 done, Batch 4: 9/9 core cleanups done; WRAP-4/5 (larger, absorbs WRAP-3 closures) remaining · Branch: `refactor/arch-backlog`
+Status: **Batch 4 complete** — all batches done (refactor track). Remaining: MCP-2 (verify-gated, needs live codex), STATE-7/FE-6 (deferred), end-of-round real-machine test · Branch: `refactor/arch-backlog`
 
 ## Progress
 
@@ -33,11 +33,11 @@ Partials note what was intentionally deferred and where it sequences next.
 | SRV-3 | done | `commands.py` macro dispatch + draft logic → `session_engine.process_draft`; thin route-and-trigger core |
 | FE-4 | done | inbound `onmessage` chain → per-type `Hub.on` (chat.js); switch deleted, `onmessage` is just `Hub.emit` |
 | FE-5 | done | `appendMessage` type-switch → `_messageRenderers` (join/leave/summary/proposals/system) + `_renderChat`; appendMessage = dispatch + scroll bookkeeping |
-| WRAP-4/5 | pending | shared `run_loop(backend)` + `identity.py` (absorbs WRAP-3 closure cluster) |
+| WRAP-4/5 | done | `supervisor.run_loop` (shared restart skeleton; `run_agent` signatures unchanged) + `identity.py` (name/token lock). WRAP-3's monitor closures (`_heartbeat`/`_watcher_monitor`/`_activity_monitor`) left inline — wrapper.py-internal orchestration, high context-coupling, low cross-wrapper dup; own item if wanted |
 | MCP-2 | verify-gated | needs live codex static-bearer-header check; cannot run headless |
 | STATE-7, FE-6 | deferred | large/strategic — explicit go decision required |
 
-Tests: 42 → 139 passing (`unittest`). The three large mechanical refactors (SRV-2,
+Tests: 42 → 151 passing (`unittest`). The three large mechanical refactors (SRV-2,
 MCP-3, FE-3) used a `tokenize`-based renamer to avoid corrupting strings/comments.
 
 ## How to read this
