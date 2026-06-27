@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from naming import derive_color, family_conflict, next_free_slot, parse_name  # noqa: E402
+from naming import (  # noqa: E402
+    compose_color, compose_label, derive_color, family_conflict, next_free_slot, parse_name,
+)
 
 
 class ParseNameTests(unittest.TestCase):
@@ -74,6 +76,30 @@ class DeriveColorTests(unittest.TestCase):
         out = derive_color("#3366ff", 2)
         self.assertNotEqual(out, "#3366ff")
         self.assertRegex(out, r"^#[0-9a-f]{6}$")
+
+
+class ComposeTests(unittest.TestCase):
+    def test_label_slot_one_is_bare(self):
+        self.assertEqual(compose_label({"label": "Claude"}, "claude", 1), "Claude")
+
+    def test_label_slot_two_appends_number(self):
+        self.assertEqual(compose_label({"label": "Claude"}, "claude", 2), "Claude 2")
+
+    def test_label_force_number_on_slot_one(self):
+        self.assertEqual(compose_label({"label": "Claude"}, "claude", 1, force_number=True), "Claude 1")
+
+    def test_label_falls_back_to_capitalized_base(self):
+        self.assertEqual(compose_label({}, "codex", 1), "Codex")
+        self.assertEqual(compose_label({}, "codex", 3), "Codex 3")
+
+    def test_color_slot_one_is_base(self):
+        self.assertEqual(compose_color({"color": "#3366ff"}, 1), "#3366ff")
+
+    def test_color_variant_differs(self):
+        self.assertNotEqual(compose_color({"color": "#3366ff"}, 2), "#3366ff")
+
+    def test_color_default_base_when_missing(self):
+        self.assertEqual(compose_color({}, 1), "#888")
 
 
 if __name__ == "__main__":

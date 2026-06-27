@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import atomic_io
 
-from naming import derive_color, family_conflict, next_free_slot, parse_name
+from naming import compose_color, compose_label, family_conflict, next_free_slot, parse_name
 
 
 @dataclass
@@ -122,7 +122,7 @@ class RuntimeRegistry:
                     del self._instances[base]
                     slot1.name = new_s1_name
                     base_cfg = self._bases[base]
-                    slot1.label = f"{base_cfg.get('label', base.capitalize())} 1"
+                    slot1.label = compose_label(base_cfg, base, 1, force_number=True)
                     # Color stays the same (slot 1 = base color)
                     self._instances[new_s1_name] = slot1
                     self._renames[base] = new_s1_name
@@ -130,14 +130,8 @@ class RuntimeRegistry:
 
             name = base if slot == 1 else f"{base}-{slot}"
             base_cfg = self._bases[base]
-            color = derive_color(base_cfg.get("color", "#888"), slot)
-
-            if label:
-                lbl = label
-            elif slot == 1:
-                lbl = base_cfg.get("label", base.capitalize())
-            else:
-                lbl = f"{base_cfg.get('label', base.capitalize())} {slot}"
+            color = compose_color(base_cfg, slot)
+            lbl = label or compose_label(base_cfg, base, slot)
 
             # Fresh registrations are immediately authoritative. Identity
             # recovery/reclaim still uses chat_claim, but normal startup should
@@ -178,8 +172,8 @@ class RuntimeRegistry:
                     remaining.name = base
                     remaining.slot = 1
                     base_cfg = self._bases.get(base, {})
-                    remaining.label = base_cfg.get("label", base.capitalize())
-                    remaining.color = derive_color(base_cfg.get("color", "#888"), 1)
+                    remaining.label = compose_label(base_cfg, base, 1)
+                    remaining.color = compose_color(base_cfg, 1)
                     self._instances[base] = remaining
                     self._renames[old_name] = base
                     renamed_back = {"old": old_name, "new": base}
@@ -266,11 +260,8 @@ class RuntimeRegistry:
                         if t_base == inst.base:
                             # Target parses as same family (e.g. 'claude' or 'claude-3')
                             inst.slot = t_slot
-                            inst.color = derive_color(base_cfg.get("color", "#888"), t_slot)
-                            if t_slot == 1:
-                                inst.label = base_cfg.get("label", inst.base.capitalize())
-                            else:
-                                inst.label = f"{base_cfg.get('label', inst.base.capitalize())} {t_slot}"
+                            inst.color = compose_color(base_cfg, t_slot)
+                            inst.label = compose_label(base_cfg, inst.base, t_slot)
                         else:
                             # Custom name (e.g. 'claude-music') — keep slot color, use name as label
                             inst.label = target_name
@@ -340,17 +331,14 @@ class RuntimeRegistry:
                     inst.label = label
                 elif t_base == inst.base and t_slot != inst.slot:
                     # Numbered variant (e.g. claude-3) — use "Claude 3"
-                    if t_slot == 1:
-                        inst.label = base_cfg.get("label", inst.base.capitalize())
-                    else:
-                        inst.label = f"{base_cfg.get('label', inst.base.capitalize())} {t_slot}"
+                    inst.label = compose_label(base_cfg, inst.base, t_slot)
                 else:
                     inst.label = new_name
 
                 # Update slot + color if it's a numbered family name
                 if t_base == inst.base:
                     inst.slot = t_slot
-                    inst.color = derive_color(base_cfg.get("color", "#888"), t_slot)
+                    inst.color = compose_color(base_cfg, t_slot)
 
                 self._instances[new_name] = inst
                 self._renames[old_name] = new_name

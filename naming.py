@@ -66,3 +66,22 @@ def derive_color(base_hex: str, slot: int) -> str:
 
     r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
     return f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
+
+
+def compose_label(base_cfg: dict, base: str, slot: int, *, force_number: bool = False) -> str:
+    """Display label for an instance (STATE-5 — the rule register/claim/rename/
+    deregister all duplicated).
+
+    Slot 1 uses the bare base label (the capitalized base name as fallback);
+    slots >= 2 append the slot number. `force_number` numbers slot 1 too — used
+    when slot 1 is renamed to ``base-1`` as a second instance registers.
+    """
+    base_label = base_cfg.get("label", base.capitalize())
+    if slot == 1 and not force_number:
+        return base_label
+    return f"{base_label} {slot}"
+
+
+def compose_color(base_cfg: dict, slot: int) -> str:
+    """Per-slot instance color from the base config (slot 1 = base color)."""
+    return derive_color(base_cfg.get("color", "#888"), slot)

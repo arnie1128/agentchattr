@@ -26,7 +26,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | STATE-1 | P1 | **done** | one `reachable()`/`reachable_names()` predicate (app.py) + presence ops encapsulated in `mcp_state` (sweep/last_seen/pop_renamed/clear_activity_offline/report_active); 0 private pokes in app.py/mcp_bridge; +MCP-3(b) |
 | STATE-3 | P2 | done | `0d61519` `_enrich` copies; view fields stay off the record |
 | STATE-4 | P2 | **done** | (a) registry rename-save atomic (with NEW-STATE-PERSIST-1); (b) O(n) jobs rewrite accepted + documented in `jobs._save` (bounded work-threads) |
-| STATE-5 | P2 | partial | `6e72c2e` `naming.py` pure leaves only; view/auth/4× policy orchestration remain in registry |
+| STATE-5 | P2 | **done** | `naming.compose_label`/`compose_color` unify the 12 inline label/colour sites across register/claim/rename/deregister; `.capitalize()`/`derive_color(` in registry → 0. View/auth kept in registry (see note) |
 | STATE-6 | P3 | done | `037695e` `routing_paused` rename + single `_rewrite` |
 | STATE-7 | P3 | deferred | **DECISION: defer** (YAGNI — no second backend; reactivate on a scheduled backend change) |
 | NEW-STATE-PERSIST-1 | P2 | **done** | 9 saves routed through `write_json_atomic`; `store._rewrite` → new `write_jsonl_atomic` (tmp+fsync+replace); orphan `os` dropped from mcp_state; +STATE-4(a) |
@@ -77,7 +77,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | STATE-1 | Done (B1) | one reachable() predicate; presence encapsulated in-place in mcp_state (see note) |
 | STATE-3 | Done | _enrich copies |
 | STATE-4 | Done (a=do / b=accept) | rename-save atomic; O(n) accepted+documented in jobs._save |
-| STATE-5 | Do / Accept | NamingPolicy + view move; resolve_token & _inst_dict stay |
+| STATE-5 | Done / refined | naming composer done; get_agent_config kept (peer projection, like _inst_dict) — refinement of the original decision |
 | STATE-6 | Done | routing_paused rename; single _rewrite |
 | STATE-7 | Defer | speculative abstraction; reactivate on a real backend change |
 | NEW-STATE-PERSIST-1 | Done (B2) | atomic adoption (9 sites) + write_jsonl_atomic; includes STATE-4(a) |
@@ -267,13 +267,14 @@ Confirmed done. `session_engine.py:455 enriched = dict(session)` is the first st
 - **Fix scope (修正範圍):** (a) `registry.py:80-90` swap to `write_json_atomic` (1 site; overlaps NEW-STATE-PERSIST-1). (b) `jobs.py` message model: medium if split to per-job append-log (`add_message` + `_load` + `get_messages`, ~1 file), trivial if accepted-and-documented.
 - **Completion criteria (達成條件):** `registry._save_renames` routes through an atomic helper WITH fsync (no hand-rolled `tmp.write_text` remains); AND either `jobs.add_message` no longer serializes other jobs' messages (a kill-during-add on job A leaves job B byte-identical in the persisted blob) OR the O(n) sub-item is explicitly closed with a written rationale bounding job-message count; `test_atomic_io` green.
 
-#### STATE-5 — registry naming leaves extracted; view + auth + 4× policy orchestration remain (P2, partial)
+#### STATE-5 — registry naming leaves extracted; view + auth + 4× policy orchestration remain (P2, done)
 **Decision (定案):** **Do the SRP wins (Batch 4):** a `NamingPolicy` composer (kills the 4x inline label/slot/colour dup) and move `get_agent_config` (a WS projection) to a view layer. **Accept** `resolve_token` staying in registry (token lookup is storage-adjacent) and **keep** `_inst_dict` (the registry's own canonical serializer) — extracting either is churn without a real boundary win.
 
 Only part 1 landed: `naming.py` holds the pure leaves (`parse_name`/`next_free_slot`/`family_conflict`/`derive_color`), imported at registry.py:17 and unit-tested. **Not done:** (2) view/wire-shape helpers — `get_agent_config` (registry.py:389-395, a WS projection) and `_inst_dict` (540-550); (3) `resolve_token` auth resolver (504-510); (4) the label/slot/color **orchestration** is still inlined and duplicated across `register` (127/135/140-142), `deregister` (183-184), `claim` (271-275), `rename` (343-355). (The prior finding's grep count was wrong: the call-form `grep -nE '\.capitalize\(\)|derive_color\(' registry.py` = **12** inline sites + the bare import at 17, not 10.)
 - **Approach (方案):** two-layer split — (a) `NamingPolicy.apply(base_cfg, slot, custom_label)` composing the leaves into `(name, label, color, slot)`, called from register/claim/rename/deregister to kill the 4× dup; (b) move `get_agent_config` (the WS projection) to a view/serializer layer. `resolve_token` stays in registry (storage-adjacent token lookup; decided — see Decision). `_inst_dict` relocation is debatable (it is the registry's own canonical Instance→dict serializer used by ~12 internal methods) — weigh before extracting.
 - **Fix scope (修正範圍):** `registry.py` (550 lines): add a `NamingPolicy` composer, replace the 4 inlined blocks with one call each (~40 lines deduped); move `get_agent_config` to a view module. Public method surface unchanged. Medium, internal.
 - **Completion criteria (達成條件):** `grep -nE '\.capitalize\(\)|derive_color\(' registry.py` → 0 (all 12 inline call-sites delegated; the bare `from naming import` may stay); register/claim/rename/deregister each derive identity via ONE `NamingPolicy` call; `get_agent_config` lives outside `RuntimeRegistry`; tests green.
+- **Done — execution note (decision refined):** `naming.compose_label(base_cfg, base, slot, *, force_number=)` and `compose_color(base_cfg, slot)` now own the label/colour rule that register / claim / rename / deregister each inlined (~12 sites); `grep -nE '\.capitalize\(\)|derive_color\(' registry.py` → 0; existing registry behaviour is covered by test_naming + test_resolve (still green) and +7 compose tests. **get_agent_config kept in RuntimeRegistry, not moved to a view module:** it is a 4-line lock-guarded projection peer to get_active_names / get_all_names; extracting only it would either expose `_instances` (worse encapsulation) or add a redundant accessor for 4 lines — the same reasoning that kept `_inst_dict` and `resolve_token`. This refines the original STATE-5 decision (the high-value naming dedup landed; the view-layer split was not worth the churn).
 
 #### STATE-6 — disambiguate the two `paused` notions + collapse duplicate rewrite bodies (P3, done)
 **Decision (定案):** Done — closed.
