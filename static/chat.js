@@ -9,7 +9,7 @@ let pendingAttachments = [];
 let autoScroll = true;
 let reconnectTimer = null;
 Store.set('username', 'user');  // single owner is Store (FE-3)
-let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
+Store.set('agentConfig', {});  // { name: { color, label } } — registered instances (used for pills); single owner is Store (FE-3)
 let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
 let todos = {};  // { msg_id: "todo" | "done" }
 Store.set('rules', []);  // array of rule objects from server — single owner is Store (FE-3)
@@ -40,7 +40,7 @@ Store.watch('activeChannel', function(v) { try { localStorage.setItem('agentchat
 window._setPendingChannelSwitch = function(v) { pendingChannelSwitch = v; };
 // scrollToBottom is set after function definition (see below)
 Object.defineProperty(window, 'username', { get() { return Store.get('username'); } });
-Object.defineProperty(window, 'agentConfig', { get() { return agentConfig; } });
+Object.defineProperty(window, 'agentConfig', { get() { return Store.get('agentConfig'); } });
 Object.defineProperty(window, 'ws', { get() { return ws; } });
 Object.defineProperty(window, 'soundEnabled', { get() { return Store.get('soundEnabled'); } });
 Object.defineProperty(window, 'rules', { get() { return Store.get('rules'); }, set(v) { Store.set('rules', v); } });
@@ -113,7 +113,7 @@ function buildSoundSettings() {
     container.innerHTML = '';
 
     // Default sound + cross-channel sound + per-agent rows
-    const agents = ['default', 'cross-channel', ...Object.keys(agentConfig)];
+    const agents = ['default', 'cross-channel', ...Object.keys(Store.get('agentConfig'))];
     for (const name of agents) {
         const row = document.createElement('div');
         row.className = 'sound-row';
@@ -121,7 +121,7 @@ function buildSoundSettings() {
         label.className = 'sound-label';
         label.textContent = name === 'default' ? 'Default sound'
             : name === 'cross-channel' ? 'Background alerts'
-            : (agentConfig[name]?.label || name);
+            : (Store.get('agentConfig')[name]?.label || name);
         const select = document.createElement('select');
         select.className = 'sound-select';
         select.dataset.agent = name;
@@ -178,14 +178,14 @@ function getAvatarSvg(sender) {
     if (resolved) {
         if (BRAND_AVATARS[resolved]) return BRAND_AVATARS[resolved];
         // Use base field from agent config (handles custom names like "claudeypops" → claude)
-        const cfg = agentConfig[resolved];
+        const cfg = Store.get('agentConfig')[resolved];
         if (cfg && cfg.base && BRAND_AVATARS[cfg.base]) return BRAND_AVATARS[cfg.base];
         // Fallback: parse base-N pattern (claude-2 → claude)
         const base = resolved.replace(/-\d+$/, '');
         if (base !== resolved && BRAND_AVATARS[base]) return BRAND_AVATARS[base];
     }
     // Fall back for offline agents: check config base, then parse pattern
-    const cfg = agentConfig[s];
+    const cfg = Store.get('agentConfig')[s];
     if (cfg && cfg.base && BRAND_AVATARS[cfg.base]) return BRAND_AVATARS[cfg.base];
     const base = s.replace(/-\d+$/, '');
     if (BRAND_AVATARS[base]) return BRAND_AVATARS[base];
@@ -593,7 +593,7 @@ function _renderChat(el, msg) {
         if (mentions) {
             const lastMention = mentions[mentions.length - 1].slice(1).toLowerCase();
             // Check against registered agents (agentConfig keys are name labels)
-            if (agentConfig[lastMention]) {
+            if (Store.get('agentConfig')[lastMention]) {
                 Store.set('_lastMentionedAgent', lastMention);
             }
         }
@@ -672,9 +672,9 @@ function getSenderClass(sender) {
 
 function resolveAgent(name) {
     const s = name.toLowerCase();
-    if (s in agentConfig) return s;
+    if (s in Store.get('agentConfig')) return s;
     // Try prefix match: "gemini-cli" → "gemini"
-    for (const key of Object.keys(agentConfig)) {
+    for (const key of Object.keys(Store.get('agentConfig'))) {
         if (s.startsWith(key)) return key;
     }
     return null;
@@ -686,7 +686,7 @@ function getColor(sender) {
     const resolved = resolveAgent(s);
     if (resolved) {
         if (colorOverrides[resolved]) return colorOverrides[resolved];
-        return agentConfig[resolved].color;
+        return Store.get('agentConfig')[resolved].color;
     }
     // Check overrides for unresolved names too
     if (colorOverrides[s]) return colorOverrides[s];
@@ -765,10 +765,11 @@ function repositionScrollAnchor() {
 // --- Agents ---
 
 function applyAgentConfig(data) {
-    agentConfig = {};
+    const next = {};
     for (const [name, cfg] of Object.entries(data)) {
-        agentConfig[name.toLowerCase()] = cfg;
+        next[name.toLowerCase()] = cfg;
     }
+    Store.set('agentConfig', next);
     buildStatusPills();
     buildMentionToggles();
     buildSoundSettings();
@@ -951,7 +952,7 @@ document.addEventListener('keydown', (e) => {
 function buildStatusPills() {
     const container = document.getElementById('agent-status');
     container.innerHTML = '';
-    for (const [name, cfg] of Object.entries(agentConfig)) {
+    for (const [name, cfg] of Object.entries(Store.get('agentConfig'))) {
         const pill = document.createElement('div');
         pill.className = 'status-pill';
         if (cfg.state === 'pending') pill.classList.add('pending');
@@ -1000,7 +1001,7 @@ function _showNextPendingName() {
     if (_nameModalActive || _pendingNameQueue.length === 0) return;
     const next = _pendingNameQueue.shift();
     // Only show if still pending in agentConfig
-    const cfg = agentConfig[next.name];
+    const cfg = Store.get('agentConfig')[next.name];
     if (cfg && cfg.state === 'pending') {
         const pillEl = document.getElementById(`status-${next.name}`);
         showPillPopover(pillEl || null, { ...next, mode: 'pending' });
@@ -1949,7 +1950,7 @@ function selectSlashCommand(cmd) {
 function getMentionCandidates() {
     // Build list: registered agents + broadcast mention.
     const candidates = [];
-    for (const [name, cfg] of Object.entries(agentConfig)) {
+    for (const [name, cfg] of Object.entries(Store.get('agentConfig'))) {
         if (cfg.state === 'pending') continue;
         candidates.push({ name, label: cfg.label || name, color: cfg.color });
     }
@@ -2766,10 +2767,10 @@ function buildMentionToggles() {
 
     // Prune stale mentions for agents no longer in config
     for (const name of activeMentions) {
-        if (!(name in agentConfig)) activeMentions.delete(name);
+        if (!(name in Store.get('agentConfig'))) activeMentions.delete(name);
     }
 
-    for (const [name, cfg] of Object.entries(agentConfig)) {
+    for (const [name, cfg] of Object.entries(Store.get('agentConfig'))) {
         if (cfg.state === 'pending') continue;  // skip pending instances
         const btn = document.createElement('button');
         btn.className = 'mention-toggle';
