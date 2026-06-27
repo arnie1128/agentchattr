@@ -11,13 +11,47 @@ How it works:
   4. Ctrl+B, D to detach (agent keeps running in background)
 """
 
+import hashlib
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import supervisor
+
+
+def _safe_tmux_component(value: str, *, fallback: str = "default", max_len: int = 32) -> str:
+    value = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-").lower()
+    return (value or fallback)[:max_len].strip("-") or fallback
+
+
+def build_tmux_session_name(
+    assigned_name: str,
+    *,
+    project_dir: Path,
+    data_dir: Path,
+    server_port: int,
+    mcp_cfg: dict,
+) -> str:
+    """Build a tmux-global session name that is unique across isolated projects.
+
+    Moved here from wrapper.py (WRAP-2): the tmux session name is unix-only, so
+    it lives with the tmux backend. Pure + deterministic, so unit-testable.
+    """
+    fingerprint_src = "|".join([
+        str(project_dir),
+        str(data_dir.resolve()),
+        str(server_port),
+        str(mcp_cfg.get("http_port", "")),
+        str(mcp_cfg.get("sse_port", "")),
+    ])
+    digest = hashlib.sha1(fingerprint_src.encode("utf-8")).hexdigest()[:8]
+    project_hint = _safe_tmux_component(project_dir.name, max_len=24)
+    agent_hint = _safe_tmux_component(assigned_name, fallback="agent", max_len=32)
+    return f"agentchattr-{agent_hint}-{project_hint}-{digest}"
 
 
 def _session_exists(session_name: str) -> bool:
@@ -120,7 +154,6 @@ def run_agent(
         agent_cmd = f"env {' '.join(env_parts)} {agent_cmd}"
 
     # Resolve cwd to absolute path (tmux -c needs it)
-    from pathlib import Path
     abs_cwd = str(Path(cwd).resolve())
 
     # Wire up injection with the tmux session name

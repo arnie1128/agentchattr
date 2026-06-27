@@ -18,10 +18,8 @@ How it works:
   4. The agent picks up the prompt as if the user typed it.
 """
 
-import hashlib
 import json
 import os
-import re
 import shutil
 import sys
 import threading
@@ -40,33 +38,6 @@ from mcp_inject import (
     _resolve_mcp_inject,
     _VALID_INJECT_MODES,
 )
-
-
-def _safe_tmux_component(value: str, *, fallback: str = "default", max_len: int = 32) -> str:
-    value = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-").lower()
-    return (value or fallback)[:max_len].strip("-") or fallback
-
-
-def _build_tmux_session_name(
-    assigned_name: str,
-    *,
-    project_dir: Path,
-    data_dir: Path,
-    server_port: int,
-    mcp_cfg: dict,
-) -> str:
-    """Build a tmux-global session name that is unique across isolated projects."""
-    fingerprint_src = "|".join([
-        str(project_dir),
-        str(data_dir.resolve()),
-        str(server_port),
-        str(mcp_cfg.get("http_port", "")),
-        str(mcp_cfg.get("sse_port", "")),
-    ])
-    digest = hashlib.sha1(fingerprint_src.encode("utf-8")).hexdigest()[:8]
-    project_hint = _safe_tmux_component(project_dir.name, max_len=24)
-    agent_hint = _safe_tmux_component(assigned_name, fallback="agent", max_len=32)
-    return f"agentchattr-{agent_hint}-{project_hint}-{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +74,29 @@ def _fetch_active_rules(server_port: int, token: str = "") -> dict | None:
 def _report_rule_sync(server_port: int, agent_name: str, epoch: int, token: str = ""):
     """Report that this agent has seen rules at the given epoch."""
     ServerClient(server_port).report_rule_sync(agent_name, epoch, token)
+
+
+def build_trigger_prompt(*, channel, job_id=None, custom_prompt="", role="",
+                         rules_text="", identity_hint="") -> str:
+    """Assemble the agent wake prompt (pure — no I/O, WRAP-2).
+
+    The watcher does the role/rules fetching and the epoch/refresh decision; this
+    just builds the string from the already-resolved pieces so it is unit-testable
+    without the network or filesystem.
+    """
+    if custom_prompt:
+        prompt = custom_prompt
+    elif job_id:
+        prompt = f"use mcp to read job_id={job_id} - you're mentioned in a job thread, take appropriate action and respond"
+    else:
+        prompt = f"use mcp to read #{channel} - you're mentioned, take appropriate action and respond"
+    if role:
+        prompt += f"\n\nROLE: {role}"
+    if rules_text:
+        prompt += f"\n\nRULES:\n{rules_text}"
+    if identity_hint:
+        prompt += identity_hint
+    return prompt
 
 
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
@@ -158,26 +152,18 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         except json.JSONDecodeError:
                             pass
 
-                    if custom_prompt:
-                        prompt = custom_prompt
-                    elif job_id:
-                        prompt = f"use mcp to read job_id={job_id} - you're mentioned in a job thread, take appropriate action and respond"
-                    else:
-                        prompt = f"use mcp to read #{channel} - you're mentioned, take appropriate action and respond"
-
                     # Use current identity (may have changed via rename)
                     current_name, _ = get_identity_fn()
-                    # Append role if set — check both current name and base name
+                    # Fetch role — check both current name and base name
                     role = _fetch_role(server_port, current_name)
                     if not role and current_name != agent_name:
                         role = _fetch_role(server_port, agent_name)
-                    if role:
-                        prompt += f"\n\nROLE: {role}"
 
                     # Smart rules injection: first trigger, epoch change, or periodic refresh
                     _token = get_token_fn() if get_token_fn else ""
                     rules_data = _fetch_active_rules(server_port, _token)
                     trigger_count += 1
+                    rules_text = ""
                     if rules_data:
                         # Use server-side refresh_interval (live from settings UI)
                         ri = rules_data.get("refresh_interval", refresh_interval)
@@ -189,13 +175,18 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                         if need_inject:
                             if rules_data["rules"]:
                                 rules_text = "; ".join(rules_data["rules"])
-                                prompt += f"\n\nRULES:\n{rules_text}"
                             last_rules_epoch = rules_data["epoch"]
                             _report_rule_sync(server_port, current_name, rules_data["epoch"], _token)
 
+                    identity_hint = ""
                     if first_mention and is_multi_instance:
-                        prompt += _IDENTITY_HINT
+                        identity_hint = _IDENTITY_HINT
                         first_mention = False
+
+                    prompt = build_trigger_prompt(
+                        channel=channel, job_id=job_id, custom_prompt=custom_prompt,
+                        role=role, rules_text=rules_text, identity_hint=identity_hint,
+                    )
                     # Flatten to single line — multi-line text triggers paste
                     # detection in CLIs (Claude Code shows "[Pasted text +N]")
                     # which can break injection of long session prompts
@@ -515,9 +506,9 @@ def main():
 
         _set_activity_checker(get_activity_checker(_agent_pid, agent_name=assigned_name, trigger_flag=_trigger_flag))
     else:
-        from wrapper_unix import get_activity_checker, run_agent
+        from wrapper_unix import get_activity_checker, run_agent, build_tmux_session_name
 
-        unix_session_name = _build_tmux_session_name(
+        unix_session_name = build_tmux_session_name(
             assigned_name,
             project_dir=project_dir,
             data_dir=data_dir,
