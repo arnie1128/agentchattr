@@ -2964,11 +2964,12 @@ Hub.on('clear', function (event) {
                 toRemove.push(el);
             }
         }
-        toRemove.forEach(el => el.remove());
-        // Drop the cleared channel's messages from the model too (FE-6)
-        for (const [k, m] of messagesById) {
-            if ((m.channel || 'general') === clearChannel) messagesById.delete(k);
-        }
+        // Drop exactly the removed nodes from the model too (FE-6) — match the
+        // DOM-removal scope so the two cannot diverge. Job breadcrumbs nested in
+        // a .job-group wrapper are not direct #messages children, so neither the
+        // DOM clear nor this model delete touches them (pre-existing behaviour;
+        // a channel-wide model scan would orphan them from the surviving DOM).
+        toRemove.forEach(el => { messagesById.delete(String(el.dataset.id)); el.remove(); });
         // Clean up orphaned date dividers and reset tracking
         delete lastMessageDates[clearChannel];
         filterMessagesByChannel();
