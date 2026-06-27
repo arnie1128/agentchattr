@@ -40,7 +40,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | WRAP-2 | P1 | **done** | `436c643` mcp_inject; tmux helpers -> `wrapper_unix.build_tmux_session_name`; pure `build_trigger_prompt` split out of `_queue_watcher` (I/O stays); both unit-tested |
 | WRAP-3 | P2 | **done (right-sized)** | `9cf1af6` argparse/proxy; thread-kwargs dedup via `_watcher_kwargs()`; full monitor-closure lift to module scope descoped (heavy nonlocal-mutable coupling, untestable, marginal gain — re-affirms prior right-sizing) |
 | WRAP-4 | P2 | done | `supervisor.run_loop` shared restart skeleton |
-| WRAP-5 | P2 | **partial** | `identity.py` (name/token) landed; heartbeat-409 re-register still duplicated |
+| WRAP-5 | P2 | **done** | `identity.handle_heartbeat_409(exc, client, agent, label, set_identity, on_recover=)` owns the catch->register->set-identity skeleton; both wrappers call it; the 409 logic literal lives only in identity.py |
 | WRAP-6 | P3 | **partial** | `1121894` `resolve_path` within config_loader; `_load.py` dup remains, no guard test |
 | NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
@@ -91,7 +91,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | WRAP-2 | Done (B4) | tmux helpers -> wrapper_unix; pure build_trigger_prompt; +tests |
 | WRAP-3 | Done (right-sized) | thread-kwargs deduped; closure-lift descoped (coupling/untestable) |
 | WRAP-4 | Done | supervisor.run_loop shared |
-| WRAP-5 | Do (B4) | extract handle_heartbeat_409 |
+| WRAP-5 | Done (B4) | handle_heartbeat_409 shared; +3 tests |
 | WRAP-6 | Accept | keep documented dup + drift test; decline shared-leaf (bootstrap constraint) |
 | NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
@@ -374,7 +374,7 @@ Confirmed done. `ServerClient` (server_client.py:30) owns the wire contract; `_a
 
 Confirmed done. `supervisor.run_loop` (supervisor.py:16) is the only `while True` restart skeleton; both platform files delegate (wrapper_windows.py:480, wrapper_unix.py:174). Proof: `grep 'supervisor.run_loop'` → exactly those two sites; `test_supervisor` present. The inject-delay scaler `max(delay, len(text)*0.001)` is platform-native pacing (co-located with each inject primitive), not the restart dup the item targeted.
 
-#### WRAP-5 — share ServerClient + identity.py; 409 re-register still duplicated (P2, partial)
+#### WRAP-5 — share ServerClient + identity.py; 409 re-register still duplicated (P2, done)
 **Decision (定案):** **Do (Batch 4).** Extract `identity.handle_heartbeat_409(...)`; per-wrapper recovery side effects stay in the callback. Small DRY + first test of the 409 path.
 
 Shared infra landed (`Identity` + `ServerClient` consumed by wrapper_api.py). **Not done:** the heartbeat-409 re-register skeleton is still duplicated — wrapper.py:419-426 (409 → `client.register` → `set_runtime_identity` → `_notify_recovery`) vs wrapper_api.py:146-153 (409 → `client.register` → `set_identity` → print). Only the post-recovery side effect differs. `grep '.code == 409'` → exactly those two sites; `identity.py` has no recovery helper; no test covers the 409 sequence.

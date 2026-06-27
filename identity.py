@@ -53,3 +53,24 @@ class Identity:
                 self._token = token
                 changed = True
             return changed
+
+
+def handle_heartbeat_409(exc, client, agent, label, set_identity, *, on_recover=None) -> bool:
+    """Recover from a heartbeat HTTP 409 (stale session) — shared by both wrappers.
+
+    If `exc` is a 409, re-register a fresh identity, push it via
+    set_identity(name, token), and run the per-wrapper on_recover(name) hook (a
+    recovery-flag file in wrapper.py, a log line in wrapper_api.py). Returns
+    whether `exc` was a 409. Best-effort: register/recover failures are swallowed
+    so the heartbeat loop keeps running.
+    """
+    if getattr(exc, "code", None) != 409:
+        return False
+    try:
+        replacement = client.register(agent, label)
+        set_identity(replacement["name"], replacement["token"])
+        if on_recover:
+            on_recover(replacement["name"])
+    except Exception:
+        pass
+    return True

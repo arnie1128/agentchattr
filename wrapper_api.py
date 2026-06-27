@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from identity import Identity
+from identity import Identity, handle_heartbeat_409
 from server_client import ServerClient
 
 ROOT = Path(__file__).parent
@@ -144,13 +144,9 @@ def main():
                     set_identity(new_name=server_name)
                     print(f"  Identity updated: {n} -> {server_name}")
             except urllib.error.HTTPError as exc:
-                if exc.code == 409:
-                    try:
-                        replacement = client.register(agent, args.label)
-                        set_identity(replacement["name"], replacement["token"])
-                        print(f"  Re-registered as: {replacement['name']}")
-                    except Exception:
-                        pass
+                handle_heartbeat_409(
+                    exc, client, agent, args.label, set_identity,
+                    on_recover=lambda n: print(f"  Re-registered as: {n}"))
             except Exception:
                 pass
             time.sleep(5)

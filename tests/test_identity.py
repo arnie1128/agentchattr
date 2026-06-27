@@ -63,5 +63,49 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(pairs[name], token)
 
 
+class _Exc:
+    def __init__(self, code):
+        self.code = code
+
+
+class _Client:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.registered = []
+
+    def register(self, agent, label):
+        self.registered.append((agent, label))
+        if self.fail:
+            raise RuntimeError("register failed")
+        return {"name": f"{agent}-1", "token": "fresh"}
+
+
+class HandleHeartbeat409Tests(unittest.TestCase):
+    def test_409_re_registers_sets_identity_and_recovers(self):
+        client = _Client()
+        ident = {}
+        recovered = []
+        handled = identity.handle_heartbeat_409(
+            _Exc(409), client, "claude", "Claude",
+            lambda n, t: ident.update(name=n, token=t),
+            on_recover=lambda n: recovered.append(n))
+        self.assertTrue(handled)
+        self.assertEqual(client.registered, [("claude", "Claude")])
+        self.assertEqual(ident, {"name": "claude-1", "token": "fresh"})
+        self.assertEqual(recovered, ["claude-1"])
+
+    def test_non_409_is_ignored(self):
+        client = _Client()
+        handled = identity.handle_heartbeat_409(
+            _Exc(500), client, "claude", "Claude", lambda n, t: None)
+        self.assertFalse(handled)
+        self.assertEqual(client.registered, [])  # no re-register on non-409
+
+    def test_register_failure_is_swallowed(self):
+        # Best-effort recovery: a register failure must not raise out of the loop.
+        identity.handle_heartbeat_409(
+            _Exc(409), _Client(fail=True), "claude", "Claude", lambda n, t: None)
+
+
 if __name__ == "__main__":
     unittest.main()

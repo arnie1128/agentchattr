@@ -26,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 
-from identity import Identity
+from identity import Identity, handle_heartbeat_409
 from server_client import ServerClient
 
 ROOT = Path(__file__).parent
@@ -393,13 +393,9 @@ def main():
                 if server_name != current_name:
                     set_runtime_identity(server_name)
             except urllib.error.HTTPError as exc:
-                if exc.code == 409:
-                    try:
-                        replacement = client.register(agent, args.label)
-                        set_runtime_identity(replacement["name"], replacement["token"])
-                        _notify_recovery(data_dir, replacement["name"])
-                    except Exception:
-                        pass
+                handle_heartbeat_409(
+                    exc, client, agent, args.label, set_runtime_identity,
+                    on_recover=lambda n: _notify_recovery(data_dir, n))
                 time.sleep(5)
                 continue
             except Exception:
