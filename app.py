@@ -846,7 +846,7 @@ async def broadcast(msg: dict):
 
 async def broadcast_status():
     status = state.agents.get_status()
-    status["paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
     await _broadcast(json.dumps({"type": "status", "data": status}))
 
 
@@ -1425,7 +1425,7 @@ async def api_send(request: Request):
 @app.get("/api/status")
 async def get_status():
     status = state.agents.get_status()
-    status["paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
+    status["routing_paused"] = any(state.router.is_paused(ch) for ch in state.room_settings.get("channels", ["general"]))
     return status
 
 

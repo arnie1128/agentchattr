@@ -1685,7 +1685,7 @@ const _ROLE_EMOJI = {
 
 function updateStatus(data) {
     for (const [name, info] of Object.entries(data)) {
-        if (name === 'paused') continue;
+        if (name === 'routing_paused') continue;
         const pill = document.getElementById(`status-${name}`);
         if (!pill) continue;
 

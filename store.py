@@ -155,7 +155,7 @@ class MessageStore:
                         deleted.append(mid)
                         break
             if deleted:
-                self._rewrite_jsonl()
+                self._rewrite()
                 self._save_todos()
 
         # Clean up uploaded images outside the lock
@@ -186,17 +186,9 @@ class MessageStore:
             for m in self._messages:
                 if m["id"] == msg_id:
                     m.update(updates)
-                    self._rewrite_jsonl()
+                    self._rewrite()
                     return dict(m)
             return None
-
-    def _rewrite_jsonl(self):
-        """Rewrite the JSONL file from current in-memory messages."""
-        with open(self._path, "w", encoding="utf-8") as f:
-            for m in self._messages:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
 
     def clear(self, channel: str | None = None):
         """Wipe messages and rewrite the log file.
@@ -205,7 +197,7 @@ class MessageStore:
             if channel:
                 removed_ids = {m["id"] for m in self._messages if m.get("channel", "general") == channel}
                 self._messages = [m for m in self._messages if m.get("channel", "general") != channel]
-                self._rewrite_jsonl()
+                self._rewrite()
                 # Clean up todos for cleared messages
                 for tid in list(self._todos.keys()):
                     if tid in removed_ids:
@@ -227,7 +219,7 @@ class MessageStore:
                     m["channel"] = new_name
                     modified = True
             if modified:
-                self._rewrite_jsonl()
+                self._rewrite()
 
     def rename_sender(self, old_name: str, new_name: str) -> int:
         """Rename sender on all messages from old_name to new_name. Returns count updated."""
@@ -238,7 +230,7 @@ class MessageStore:
                     m["sender"] = new_name
                     count += 1
             if count:
-                self._rewrite_jsonl()
+                self._rewrite()
         return count
 
     def delete_channel(self, name: str):
@@ -249,7 +241,7 @@ class MessageStore:
             removed_ids = {m["id"] for m in self._messages if m.get("channel") == name}
             self._messages = [m for m in self._messages if m.get("channel") != name]
             if len(self._messages) != original_len:
-                self._rewrite_jsonl()
+                self._rewrite()
                 # Clean up todos that referenced deleted messages
                 for tid in list(self._todos.keys()):
                     if tid in removed_ids:
