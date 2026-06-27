@@ -22,7 +22,7 @@ let soundEnabled = false;  // suppress sounds during initial history load
 // activeChannel: single owner is Store (FE-3). Seed it from localStorage.
 Store.set('activeChannel', localStorage.getItem('agentchattr-channel') || 'general');
 let channelList = ['general'];
-let channelUnread = {};  // { channelName: count }
+Store.set('channelUnread', {});  // { channelName: count } — single owner is Store (FE-3)
 let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
 let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
@@ -33,7 +33,7 @@ let schedulesList = [];  // array of schedule objects from server
 Object.defineProperty(window, 'SESSION_TOKEN', { get() { return SESSION_TOKEN; } });
 Object.defineProperty(window, 'activeChannel', { get() { return Store.get('activeChannel'); } });
 Object.defineProperty(window, 'channelList', { get() { return channelList; }, set(v) { channelList = v; } });
-Object.defineProperty(window, 'channelUnread', { get() { return channelUnread; }, set(v) { channelUnread = v; } });
+Object.defineProperty(window, 'channelUnread', { get() { return Store.get('channelUnread'); }, set(v) { Store.set('channelUnread', v); } });
 window._setActiveChannel = function(v) { Store.set('activeChannel', v); };
 // Persist activeChannel changes in one place — Store is the single owner.
 Store.watch('activeChannel', function(v) { try { localStorage.setItem('agentchattr-channel', v); } catch (e) {} });
@@ -474,7 +474,8 @@ function appendMessage(msg) {
         el.style.display = 'none';
         // Track unread for background channels (skip joins/leaves and initial history load)
         if (soundEnabled && msg.type !== 'join' && msg.type !== 'leave') {
-            channelUnread[msgChannel] = (channelUnread[msgChannel] || 0) + 1;
+            const _cu = Store.get('channelUnread');
+            _cu[msgChannel] = (_cu[msgChannel] || 0) + 1;
             renderChannelTabs();
             // Play soft pluck for cross-channel chat messages from others (only when focused)
             if (document.hasFocus() && msg.type === 'chat' && msg.sender && msg.sender.toLowerCase() !== username.toLowerCase()) {
