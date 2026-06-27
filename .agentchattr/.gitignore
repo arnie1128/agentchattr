@@ -1,0 +1,3 @@
+# Runtime artifacts of this project's agentchattr instance.
+__pycache__/
+data/

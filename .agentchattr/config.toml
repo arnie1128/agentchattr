@@ -1,0 +1,39 @@
+# Per-project isolated agentchattr instance — template.
+#
+# Copy this directory into your project as ".agentchattr/", then edit the
+# values below to fit your machine. See README.md (next to this file) for
+# the full quick-start.
+#
+# Paths accept three forms:
+#   * Absolute            "/Users/you/some/path"
+#   * Home-relative       "~/some/path"
+#   * Config-dir relative "../some/path"  (anchored at this file's directory)
+
+[agentchattr]
+# Where the agentchattr install lives (wrapper.py / run.py / launchers/macos-linux/).
+# Three forms accepted (see above). Change to match your local layout.
+#
+# Examples:
+#   root = "~/agentchattr"
+#   root = "/opt/agentchattr"
+#   root = "../../agentchattr"
+root = ".."        # the engine is this repo (.agentchattr/.. = repo root)
+
+[server]
+# Web UI port. Must NOT collide with the main 8300 server or with any other
+# per-project instance on the same machine.
+port = 8300
+# Where this project's chat room state is stored. Relative paths anchor at
+# this file's directory, so "./data" stays inside .agentchattr/.
+data_dir = "./data"
+
+[mcp]
+# MCP transport ports. Must NOT collide with the main 8200/8201 or with any
+# other per-project instance on the same machine.
+http_port = 8200
+sse_port  = 8201
+
+[agent]
+# Working directory for the wrapped agent CLI (claude / codex / gemini).
+# ".." resolves to the project root (this file is in <project>/.agentchattr/).
+cwd = ".."
