@@ -382,7 +382,7 @@ python bin/wrapper.py claude -- --dangerously-skip-permissions
 
 ### Configuration
 
-Edit `config.toml` to customize agents, ports, and routing:
+Edit `config/config.toml` to customize agents, ports, and routing:
 
 ```toml
 [server]
@@ -443,9 +443,11 @@ http_port = 8200            # MCP streamable-http (Claude Code, Codex)
 sse_port = 8201             # MCP SSE transport (Gemini)
 ```
 
-### Per-project isolation
+### Engine and instances
 
-If you keep one agentchattr install shared across several repos (e.g. via dotfiles), you can run an isolated instance per project without editing `config.toml` — override the data directory and ports at launch time.
+agentchattr is an **engine** (this repo: `src/` + `bin/` + `launchers/` + `config/`) that runs chat-room **instances**. An instance is a `.agentchattr/` folder holding a `config.toml` that points `root` at the engine and overrides ports / data dir / agent cwd — it does **not** define agents (those come from the engine's `config/config.toml`). The engine even runs *itself* this way: the committed `.agentchattr/` is its own instance, launched with `.agentchattr/start_codex` (etc.). To run agentchattr against your own project, copy [`instance-template/`](instance-template/) into it as `.agentchattr/` (see [the walkthrough](instance-template/README.md)). Instances call only the engine's stable entry `launch.cmd` / `launch.sh`, so the engine's internals can be reorganized without breaking them.
+
+You can also run an isolated instance without editing `config/config.toml` — override the data directory and ports at launch time.
 
 **CLI flags** (accepted by `bin/run.py`, `bin/wrapper.py`, and `bin/wrapper_api.py`):
 
@@ -475,9 +477,9 @@ python bin/wrapper.py claude \
 
 Relative paths resolve against the shell's current directory (not agentchattr's install location), so `./.agentchattr` ends up inside your project folder.
 
-Server and wrappers share the same `AGENTCHATTR_*` env vars and the same flag names, so a launcher/profile can run multiple isolated instances by passing matching values to each process. If no flags or env vars are set, `config.toml` is used exactly as before — zero change for existing setups.
+Server and wrappers share the same `AGENTCHATTR_*` env vars and the same flag names, so a launcher/profile can run multiple isolated instances by passing matching values to each process. If no flags or env vars are set, `config/config.toml` is used exactly as before — zero change for existing setups.
 
-**Project template** — for a turnkey setup, copy [`instance-template/`](instance-template/) into your project as `.agentchattr/` and edit its `config.toml`. The template ships platform-specific thin wrappers (`start.sh` / `start_<agent>.sh` on macOS/Linux, `start.cmd` / `start_<agent>.cmd` on Windows) that read `config.toml`, export the `AGENTCHATTR_*` env vars for you, and hand off to the main agentchattr launcher. See [`instance-template/README.md`](instance-template/README.md) for the full walkthrough.
+**Project template** — for a turnkey setup, copy [`instance-template/`](instance-template/) into your project as `.agentchattr/` and edit its `config.toml`. The template ships platform-specific thin wrappers (`start.sh` / `start_<agent>.sh` on macOS/Linux, `start.cmd` / `start_<agent>.cmd` on Windows) that read `config.toml`, export the `AGENTCHATTR_*` env vars for you, and hand off to the engine's stable launch entry (`launch.cmd` / `launch.sh`). See [`instance-template/README.md`](instance-template/README.md) for the full walkthrough.
 
 ### API agents (local models)
 
@@ -488,7 +490,7 @@ Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM 
    cp config/config.local.toml.example config/config.local.toml
    ```
 
-2. Edit `config.local.toml` with your model's endpoint:
+2. Edit `config/config.local.toml` with your model's endpoint:
    ```toml
    [agents.qwen]
    type = "api"
@@ -510,7 +512,7 @@ Connect any local model with an OpenAI-compatible API (Ollama, llama-server, LM 
    python bin/wrapper_api.py qwen
    ```
 
-The wrapper registers with the server, watches for @mentions, reads recent chat context, calls your model's `/v1/chat/completions` endpoint, and posts the response back. `config.local.toml` is gitignored so your local endpoints stay out of the repo.
+The wrapper registers with the server, watches for @mentions, reads recent chat context, calls your model's `/v1/chat/completions` endpoint, and posts the response back. `config/config.local.toml` is gitignored so your local endpoints stay out of the repo.
 
 ### MiniMax (cloud API)
 
@@ -535,7 +537,7 @@ The wrapper registers with the server, watches for @mentions, reads recent chat 
    python bin/wrapper_api.py minimax
    ```
 
-Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `MiniMax-M2.5`, `MiniMax-M2.5-highspeed`. China mainland users can change `base_url` to `https://api.minimaxi.com/v1` in `config.toml`.
+Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `MiniMax-M2.5`, `MiniMax-M2.5-highspeed`. China mainland users can change `base_url` to `https://api.minimaxi.com/v1` in `config/config.toml`.
 
 ## Architecture
 
@@ -583,7 +585,10 @@ the release builder under `tools/build_release.py`.
 | `bin/wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
 | `src/wrapper/windows.py` | Windows: keystroke injection + screen buffer activity detection |
 | `src/wrapper/unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |
-| `config.toml` | All configuration (agents, ports, routing) |
+| `config/config.toml` | Engine default config — agent roster, ports, routing (shared by all instances) |
+| `launch.cmd` / `launch.sh` | Stable public launch entry (`launch <target>`); instances call only this |
+| `.agentchattr/` | The repo's own instance (config + thin wrappers) — how the repo launches its own chat |
+| `instance-template/` | Copy into your project as `.agentchattr/` for an isolated per-project instance |
 | `launchers/windows/start_*_yolo/bypass.bat` | Auto-approve launchers (Windows) |
 | `launchers/macos-linux/start_*_yolo/bypass.sh` | Auto-approve launchers (Mac/Linux) |
 

@@ -5,7 +5,8 @@ Per-agent `.bat` wrappers that start the agentchattr server (if not already runn
 When invoked through a project wrapper (`instance-template/start_<agent>.cmd`), the chain is:
 
 ```
-PowerShell -> start_<agent>.cmd -> call launchers/windows/start_<agent>.bat
+PowerShell -> .agentchattr/start_<agent>.cmd -> call <engine>/launch.cmd <agent>
+           -> call launchers/windows/start_<agent>.bat
 ```
 
 This `call` chain is sensitive to a few cmd.exe parser quirks. **Read the rules below before adding or editing files in this directory.**
