@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from session_store import SessionStore
-from session_engine import SessionEngine
+from agentchattr.session.session_store import SessionStore
+from agentchattr.session.session_engine import SessionEngine
 
 
 class FakeMessages:

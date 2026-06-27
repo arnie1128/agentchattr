@@ -13,13 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import app
-import archive
-import settings_store
-from jobs import JobStore
-from rules import RuleStore
-from store import MessageStore
-from summaries import SummaryStore
+from agentchattr.server import app
+from agentchattr.storage import archive
+from agentchattr.storage import settings_store
+from agentchattr.storage.jobs import JobStore
+from agentchattr.storage.rules import RuleStore
+from agentchattr.storage.store import MessageStore
+from agentchattr.storage.summaries import SummaryStore
 
 
 def make_stores(root: Path):

@@ -5,7 +5,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
-import atomic_io
+from agentchattr.core import atomic_io
 
 MAX_ACTIVE_RULES = 10
 MAX_TEXT_CHARS = 160

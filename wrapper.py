@@ -26,12 +26,12 @@ import threading
 import time
 from pathlib import Path
 
-from identity import Identity, handle_heartbeat_409
-from server_client import ServerClient
+from agentchattr.wrapper.identity import Identity, handle_heartbeat_409
+from agentchattr.wrapper.server_client import ServerClient
 
 ROOT = Path(__file__).parent
 
-from mcp_inject import (
+from agentchattr.mcp.mcp_inject import (
     _apply_mcp_inject,
     _build_provider_launch,
     _ensure_gemini_folder_trusted,
@@ -215,7 +215,7 @@ def _parse_wrapper_args(agent_names: list[str]):
 def main():
     import urllib.error
 
-    from config_loader import apply_cli_overrides, load_config
+    from agentchattr.core.config_loader import apply_cli_overrides, load_config
 
     # Apply AGENTCHATTR_* overrides (from CLI flags or env) BEFORE loading
     # config so the wrapper connects to the same data_dir/ports as a server
@@ -445,11 +445,11 @@ def main():
     _agent_pid = [None]
 
     if sys.platform == "win32":
-        from wrapper_windows import get_activity_checker, run_agent
+        from agentchattr.wrapper.windows import get_activity_checker, run_agent
 
         _set_activity_checker(get_activity_checker(_agent_pid, agent_name=assigned_name, trigger_flag=_trigger_flag))
     else:
-        from wrapper_unix import get_activity_checker, run_agent, build_tmux_session_name
+        from agentchattr.wrapper.unix import get_activity_checker, run_agent, build_tmux_session_name
 
         unix_session_name = build_tmux_session_name(
             assigned_name,

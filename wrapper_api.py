@@ -28,14 +28,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from identity import Identity, handle_heartbeat_409
-from server_client import ServerClient
+from agentchattr.wrapper.identity import Identity, handle_heartbeat_409
+from agentchattr.wrapper.server_client import ServerClient
 
 ROOT = Path(__file__).parent
 
 
 def main():
-    from config_loader import apply_cli_overrides, load_config
+    from agentchattr.core.config_loader import apply_cli_overrides, load_config
 
     # Apply AGENTCHATTR_* overrides (from CLI flags or env) BEFORE loading
     # config so the API wrapper connects to the same data_dir/ports as a

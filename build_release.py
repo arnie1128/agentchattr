@@ -13,26 +13,13 @@ ROOT = Path(__file__).parent
 VERSION = (ROOT / "VERSION").read_text().strip()
 OUT_NAME = f"agentchattr-{VERSION}"
 
-# Files and dirs to include (relative to repo root)
+# Files and dirs to include (relative to repo root).
+# Library modules live under the agentchattr/ package (an INCLUDE_DIR); only the
+# root entry scripts are listed here individually.
 INCLUDE_FILES = [
-    "app.py",
-    "agents.py",
-    "config_loader.py",
-    "jobs.py",
-    "mcp_bridge.py",
-    "registry.py",
-    "router.py",
-    "rules.py",
     "run.py",
-    "session_engine.py",
-    "session_store.py",
-    "store.py",
-    "schedules.py",
-    "summaries.py",
     "wrapper.py",
     "wrapper_api.py",
-    "wrapper_unix.py",
-    "wrapper_windows.py",
     "open_chat.html",
     "config.toml",
     "config.local.toml.example",
@@ -45,6 +32,7 @@ INCLUDE_FILES = [
 ]
 
 INCLUDE_DIRS = [
+    "agentchattr",
     "static",
     "launchers",
     "session_templates",

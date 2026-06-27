@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import app  # noqa: E402
-import app_state  # noqa: E402
-import mcp_state  # noqa: E402
+from agentchattr.server import app  # noqa: E402
+from agentchattr.state import app_state  # noqa: E402
+from agentchattr.state import mcp_state  # noqa: E402
 
 
 class _FakeRegistry:

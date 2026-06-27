@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import server_client
-from server_client import ServerClient
+from agentchattr.wrapper import server_client
+from agentchattr.wrapper.server_client import ServerClient
 
 
 class FakeResp:

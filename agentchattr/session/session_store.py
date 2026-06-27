@@ -6,7 +6,7 @@ import threading
 import logging
 from pathlib import Path
 
-from atomic_io import write_json_atomic
+from agentchattr.core.atomic_io import write_json_atomic
 
 log = logging.getLogger(__name__)
 

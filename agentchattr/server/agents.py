@@ -18,7 +18,7 @@ class AgentTrigger:
     def get_status(self) -> dict:
         # presence/activity/role moved to mcp_state in MCP-3; mcp_bridge no longer
         # re-exports them, so import from the owner (kept lazy to avoid a cycle).
-        from mcp_state import is_online, is_active, get_role
+        from agentchattr.state.mcp_state import is_online, is_active, get_role
         instances = self._registry.get_all()
         return {
             name: {

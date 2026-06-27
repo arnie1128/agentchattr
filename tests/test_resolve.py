@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from store import MessageStore
-from jobs import JobStore
+from agentchattr.storage.store import MessageStore
+from agentchattr.storage.jobs import JobStore
 
 
 class ResolveDecisionTests(unittest.TestCase):

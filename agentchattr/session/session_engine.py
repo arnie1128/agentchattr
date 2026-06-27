@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 
-from session_store import validate_session_template
+from agentchattr.session.session_store import validate_session_template
 
 log = logging.getLogger(__name__)
 

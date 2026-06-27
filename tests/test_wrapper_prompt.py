@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import wrapper  # noqa: E402
-import wrapper_unix  # noqa: E402
+from agentchattr.wrapper import unix as wrapper_unix  # noqa: E402
 
 
 class BuildTriggerPromptTests(unittest.TestCase):

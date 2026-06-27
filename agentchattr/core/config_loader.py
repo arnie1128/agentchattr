@@ -23,7 +23,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[2]  # agentchattr/core/config_loader.py -> repo root
 
 
 # Mapping: env var name → (config section, key, is_int)

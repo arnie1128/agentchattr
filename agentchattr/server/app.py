@@ -14,25 +14,25 @@ from fastapi.requests import Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from store import MessageStore
-from rules import RuleStore
-from summaries import SummaryStore
-from jobs import JobStore
-from schedules import ScheduleStore, parse_schedule_spec
-from router import Router
-from agents import AgentTrigger
-from registry import RuntimeRegistry
-from session_store import SessionStore
-from session_engine import SessionEngine, auto_cast
-from version_check import check as run_version_check
+from agentchattr.storage.store import MessageStore
+from agentchattr.storage.rules import RuleStore
+from agentchattr.storage.summaries import SummaryStore
+from agentchattr.storage.jobs import JobStore
+from agentchattr.storage.schedules import ScheduleStore, parse_schedule_spec
+from agentchattr.server.router import Router
+from agentchattr.server.agents import AgentTrigger
+from agentchattr.server.registry import RuntimeRegistry
+from agentchattr.session.session_store import SessionStore
+from agentchattr.session.session_engine import SessionEngine, auto_cast
+from agentchattr.core.version_check import check as run_version_check
 
-import commands
-import mcp_state
-import presence_monitor
-import uploads
-import schedule_runner
-import settings_store
-from app_state import state
+from agentchattr.server import commands
+from agentchattr.state import mcp_state
+from agentchattr.server import presence_monitor
+from agentchattr.server import uploads
+from agentchattr.server import schedule_runner
+from agentchattr.storage import settings_store
+from agentchattr.state.app_state import state
 
 log = logging.getLogger(__name__)
 
@@ -223,7 +223,7 @@ def configure(cfg: dict, session_token: str = ""):
     state.agents = AgentTrigger(state.registry, data_dir=data_dir)
 
     # Sessions
-    ROOT = Path(__file__).parent
+    ROOT = Path(__file__).resolve().parents[2]  # agentchattr/server/app.py -> repo root
     state.session_store = SessionStore(
         str(Path(data_dir) / "session_runs.json"),
         templates_dir=str(ROOT / "session_templates"),
@@ -972,7 +972,7 @@ async def upload_image(file: UploadFile = File(...)):
 @app.get("/api/export")
 async def export_history():
     """Download a zip archive of project history."""
-    import archive as _archive
+    from agentchattr.storage import archive as _archive
     import time as _time
     try:
         zip_bytes = _archive.build_export(
@@ -992,7 +992,7 @@ async def export_history():
 @app.post("/api/import")
 async def import_history(file: UploadFile = File(...)):
     """Upload a zip archive and merge it into current stores."""
-    import archive as _archive
+    from agentchattr.storage import archive as _archive
     if not file.filename or not file.filename.lower().endswith(".zip"):
         return JSONResponse({"error": "unsupported file type: expected .zip"}, status_code=400)
     content = await file.read()

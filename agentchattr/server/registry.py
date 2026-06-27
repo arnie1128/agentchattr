@@ -13,9 +13,9 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-import atomic_io
+from agentchattr.core import atomic_io
 
-from naming import compose_color, compose_label, family_conflict, next_free_slot, parse_name
+from agentchattr.server.naming import compose_color, compose_label, family_conflict, next_free_slot, parse_name
 
 
 @dataclass

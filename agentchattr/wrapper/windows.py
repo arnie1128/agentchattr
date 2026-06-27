@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-import supervisor
+from agentchattr.wrapper import supervisor
 
 if sys.platform != "win32":
     raise ImportError("wrapper_windows only works on Windows")

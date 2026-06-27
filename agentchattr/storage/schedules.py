@@ -6,7 +6,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
-import atomic_io
+from agentchattr.core import atomic_io
 
 
 # Interval parsing: "every 30m", "every 1h", "every 2h", "daily at 09:00"

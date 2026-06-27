@@ -11,7 +11,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-_ROOT = Path(__file__).parent
+_ROOT = Path(__file__).resolve().parents[2]  # agentchattr/core/version_check.py -> repo root
 _cache: dict = {"data": None, "fetched_at": 0.0}
 _CACHE_TTL = 1800  # 30 minutes
 

@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import atomic_io
-from atomic_io import write_json_atomic
+from agentchattr.core import atomic_io
+from agentchattr.core.atomic_io import write_json_atomic
 
 
 class AtomicWriteTests(unittest.TestCase):
@@ -93,7 +93,7 @@ class StoreSiteSmokeTests(unittest.TestCase):
     """The converted stores still persist valid JSON with no .tmp leftover."""
 
     def test_message_store_rewrite_is_atomic(self):
-        from store import MessageStore
+        from agentchattr.storage.store import MessageStore
 
         d = Path(tempfile.mkdtemp())
         s = MessageStore(str(d / "messages.jsonl"))
@@ -107,7 +107,7 @@ class StoreSiteSmokeTests(unittest.TestCase):
         self.assertFalse((d / "messages.jsonl.tmp").exists())
 
     def test_session_store_save_is_atomic(self):
-        from session_store import SessionStore
+        from agentchattr.session.session_store import SessionStore
 
         d = Path(tempfile.mkdtemp())
         store = SessionStore(str(d / "Sessions.json"))
@@ -121,7 +121,7 @@ class StoreSiteSmokeTests(unittest.TestCase):
         self.assertFalse((d / "Sessions.json.tmp").exists())
 
     def test_job_store_save_is_atomic(self):
-        from jobs import JobStore
+        from agentchattr.storage.jobs import JobStore
 
         d = Path(tempfile.mkdtemp())
         store = JobStore(str(d / "jobs.json"))
