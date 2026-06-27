@@ -14,7 +14,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | SRV-4 | P2 | done | `472c082` public `store.resolve_decision` / `jobs.resolve_message` |
 | SRV-5 | P2 | partial | `bcb5e7e` `_resolve_targets`/`_finish_agent_rename`; 4 inline rename sites + 4 divergent trigger loops remain |
 | SRV-6 | P2 | done | `settings_store.py` `SettingsStore`+`HatStore` (lock + validated `update`) |
-| SRV-7 | P3 | open | monitor closures + FS-migration still inline in `configure()` |
+| SRV-7 | P3 | **done** | `presence_monitor.py` + `schedule_runner.py` extracted (tick+run, explicit deps); reaper orchestration now unit-tested; FS-migration flag descoped (idempotent no-op) |
 | SRV-8 | P3 | open | version-check + `_auto_cast` still inline (hats sub-item already done by SRV-6) |
 | BUG-1 / STATE-2 | P1 | done | `640b396` locked compare-and-advance + stale-snapshot reject (session_engine.py:287-294) |
 | NEW-SRV-1 | P1 | **done** | fix `state.session_token` (app.py:757) + `/ws`-connect smoke test (test_ws_connect.py) |
@@ -65,7 +65,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | SRV-4 | Done | public resolve_decision / resolve_message |
 | SRV-5 | Do (B4) | unify 4 rename sites + 4 trigger loops; precondition for NEW-MCP-1 |
 | SRV-6 | Done | settings_store/hats lock-guarded |
-| SRV-7 | Do (B4) | extract presence_monitor/schedule_runner for testability |
+| SRV-7 | Done (B1) | presence_monitor + schedule_runner extracted + orchestration tested |
 | SRV-8 | Do (B4) | low-risk leaf extraction |
 | BUG-1 / STATE-2 | Done | locked compare-and-advance |
 | NEW-SRV-1 | Done (B0) | fixed: state.session_token + /ws smoke test |
@@ -197,13 +197,14 @@ Confirmed done. Handlers are thin; atomicity lives in the store classes. Proof: 
 
 Confirmed done. `settings_store.py` `SettingsStore`/`HatStore` own their dict + validation + atomic persist behind an `RLock`; the lock-free module dicts are gone. Proof: `grep -nE 'room_settings|agent_hats' app.py` → 0.
 
-#### SRV-7 — `configure()` inline monitor/schedule closures + unconditional FS migration (P3, open)
+#### SRV-7 — `configure()` inline monitor/schedule closures + unconditional FS migration (P3, done)
 **Decision (定案):** **Do (Batch 4, paired with STATE-1's presence work).** Extract presence_monitor.py / schedule_runner.py — the inline closures are currently un-unit-testable; gate the FS migration behind a flag.
 
 `configure()` still inlines `_background_checks` (app.py:237; presence expiry / crash-timeout deregister / leave-message debounce / status broadcast), started as a daemon thread at 365, and `_schedule_runner` (368), started at 400; plus unconditional FS migrations (log rename 149-153, decisions→rules 162-164, activities→jobs ~172). No `presence_monitor.py` / `schedule_runner.py` exist. The logic is untestable without booting the app and closes over `_known_online` / `_posted_leave` / `_known_active`.
 - **Approach (方案):** extract the two thread bodies into `presence_monitor.py` / `schedule_runner.py` taking explicit deps (registry, store, mcp_state, event-loop poster); move FS migrations into a one-shot `migrate()` gated behind a flag; `configure()` just wires + starts.
 - **Fix scope (修正範圍):** 2 new files (~130 + ~35 lines moved out of app.py) + a `migrate()` helper; `configure()` shrinks ~160 lines; 2 thread-start sites repointed.
 - **Completion criteria (達成條件):** `presence_monitor.py` and `schedule_runner.py` exist with unit tests exercising crash-timeout / leave-debounce and run-due without booting FastAPI; `grep -nE 'def _background_checks|def _schedule_runner' app.py` → 0.
+- **Done — execution note:** `presence_monitor.py` (`tick` + `run`) and `schedule_runner.py` (`tick` + `run`) extracted; `configure()` now just starts two daemon threads, passing the live `_event_loop` / `_last_active_channel` via getters and `broadcast_status`/`_broadcast` as deps. `tick` mirrors the old closure body line-for-line (the deliberate double status-broadcast preserved). Tests: +`test_presence_monitor` (4: recovery-flag drain, crash-timeout, leave-debounce, back-online) +`test_schedule_runner` (4) — the reaper orchestration finally has coverage. `grep def _background_checks|def _schedule_runner app.py` → 0. **FS-migration flag sub-item descoped (judgment):** the legacy renames are already `if legacy.exists()` idempotent no-ops, so in a temp-dir test they do nothing and do NOT block testing; a separate flag would add ceremony without value. Left in place.
 
 #### SRV-8 — self-contained leaves (version-check, `_auto_cast`) still inline (P3, open)
 **Decision (定案):** **Do (Batch 4).** Low-risk leaf extraction (version_check.py; _auto_cast -> session_engine). The hats sub-item is already satisfied by SRV-6 and is dropped.

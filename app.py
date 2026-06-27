@@ -27,6 +27,8 @@ from session_engine import SessionEngine
 
 import commands
 import mcp_state
+import presence_monitor
+import schedule_runner
 import settings_store
 from app_state import state
 
@@ -247,154 +249,23 @@ def configure(cfg: dict, session_token: str = ""):
     if _saved_hops is not None:
         state.router.max_hops = _saved_hops
 
-    # Background thread: check for wrapper recovery flag files
+    # Background threads: presence reaper + schedule runner (extracted SRV-7).
+    # The reaper reads live globals (_event_loop, _last_active_channel) via
+    # getters so it always sees the current values.
     _data_dir = Path(data_dir)
+    threading.Thread(
+        target=lambda: presence_monitor.run(
+            state,
+            get_event_loop=lambda: _event_loop,
+            get_last_active_channel=lambda: _last_active_channel,
+            broadcast_status=broadcast_status,
+            broadcast_raw=_broadcast,
+            data_dir=_data_dir,
+        ),
+        daemon=True,
+    ).start()
 
-    _known_online: set[str] = set()  # agents we've seen join — track for leave messages
-    _posted_leave: set[str] = set()  # agents we've already posted a leave for — debounce
-
-    _known_active = set()
-
-    def _background_checks():
-        import time as _time
-
-        while True:
-            _time.sleep(3)
-            # Recovery flags
-            try:
-                for flag in _data_dir.glob("*_recovered"):
-                    agent_name = flag.read_text("utf-8").strip()
-                    flag.unlink()
-                    state.store.add(
-                        "system",
-                        f"Agent routing for {agent_name} interrupted — auto-recovered. "
-                        "If agents aren't responding, try sending your message again."
-                    )
-            except Exception:
-                pass
-
-            # Pending instances (slot 2+) wait for human naming or agent claim.
-            # No auto-confirm — identity must be explicitly resolved.
-
-            # Presence expiry — post leave messages (but do NOT deregister).
-            # Deregistration only happens via /api/deregister (wrapper shutdown)
-            # OR the 60s crash timeout below.
-            # Short timeout (10s) prevents slot theft when MCP tool calls are intermittent.
-            try:
-                now = _time.time()
-                currently_online, currently_active = mcp_state.sweep()
-
-                # Crash timeout: if a wrapper hasn't heartbeated for 60s,
-                # it's dead — deregister it to free the slot.
-                _CRASH_TIMEOUT = 15
-                registered = set(state.registry.get_all_names())
-                for name in registered:
-                    last_seen = mcp_state.last_seen(name)
-                    if last_seen > 0 and now - last_seen > _CRASH_TIMEOUT:
-                        log.info(f"Crash timeout: deregistering {name} (no heartbeat for {_CRASH_TIMEOUT}s)")
-                        result = state.registry.deregister(name)
-                        if result:
-                            mcp_state.purge_identity(name)
-                            state.registry.clean_renames_for(name)
-                            renamed = result.get("_renamed_back")
-                            if renamed:
-                                mcp_state.migrate_identity(renamed["old"], renamed["new"])
-                                state.store.rename_sender(renamed["old"], renamed["new"])
-                                if _event_loop:
-                                    rename_event = json.dumps({
-                                        "type": "agent_renamed",
-                                        "old_name": renamed["old"],
-                                        "new_name": renamed["new"],
-                                    })
-                                    asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
-                            state.store.add(name, f"{name} disconnected (timeout)", msg_type="leave", channel=_last_active_channel)
-                            _posted_leave.add(name)
-
-                # Re-fetch registered names (may have changed from crash timeout above)
-                registered = set(state.registry.get_all_names())
-
-                # Detect registered instances going offline (leave message only)
-                timed_out = registered - currently_online
-                for name in timed_out:
-                    inst = state.registry.get_instance(name)
-                    if not inst:
-                        continue
-                    # Skip names that were just renamed (not actually offline)
-                    if mcp_state.pop_renamed(name):
-                        continue
-                    # Post leave message ONCE per offline transition (debounced)
-                    if name not in _posted_leave:
-                        _posted_leave.add(name)
-                        state.store.add(name, f"{name} disconnected", msg_type="leave", channel=_last_active_channel)
-
-                # Clear leave debounce for agents that came back online
-                _posted_leave -= currently_online
-
-                # Detect other agents (non-registered) going offline
-                went_offline = (_known_online - currently_online) - timed_out
-                for name in went_offline:
-                    # Skip leave messages for names that were just renamed
-                    if mcp_state.pop_renamed(name):
-                        continue
-                    if not state.registry.is_registered(name) and name not in _posted_leave:
-                        _posted_leave.add(name)
-                        state.store.add(name, f"{name} disconnected", msg_type="leave", channel=_last_active_channel)
-
-                if _known_online != currently_online and _event_loop:
-                    asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
-
-                # Clear stale activity for agents that went offline
-                stale_active = mcp_state.clear_activity_offline(currently_online)
-                if stale_active:
-                    currently_active -= set(stale_active)
-
-                # Broadcast status on any change (online set or activity set)
-                if currently_active != _known_active or _known_online != currently_online:
-                    _known_active.clear()
-                    _known_active.update(currently_active)
-                    if _event_loop:
-                        asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
-                _known_online.clear()
-                _known_online.update(currently_online)
-            except Exception:
-                pass
-
-    threading.Thread(target=_background_checks, daemon=True).start()
-
-    # --- Schedule runner: fires due scheduled prompts every 30s ---
-    def _schedule_runner():
-        import time as _time
-        while True:
-            _time.sleep(30)
-            try:
-                if not state.schedules:
-                    continue
-                due = state.schedules.run_due()
-                for s in due:
-                    prompt = s.get("prompt", "")
-                    targets = s.get("targets", [])
-                    channel = s.get("channel", "general")
-                    if not prompt or not targets:
-                        state.schedules.mark_run(s["id"])
-                        continue
-                    sender = s.get("created_by", "user")
-                    mention_str = " ".join(f"@{t}" for t in targets)
-                    full_text = f"{mention_str} {prompt}" if mention_str else prompt
-                    # store.add triggers _handle_new_message via callback,
-                    # which routes @mentions to agents — no manual trigger needed.
-                    state.store.add(
-                        sender,
-                        full_text,
-                        channel=channel,
-                    )
-                    if s.get("one_shot"):
-                        state.schedules.delete(s["id"])
-                    else:
-                        state.schedules.mark_run(s["id"])
-            except Exception:
-                log.exception("schedule runner error")
-
-    threading.Thread(target=_schedule_runner, daemon=True).start()
+    threading.Thread(target=lambda: schedule_runner.run(state), daemon=True).start()
 
 
 # --- Store → WebSocket bridge ---
