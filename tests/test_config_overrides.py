@@ -197,5 +197,23 @@ class CliOverrideExtractionTests(unittest.TestCase):
         self.assertNotIn("AGENTCHATTR_DATA_DIR", os.environ)
 
 
+class ResolvePathTests(unittest.TestCase):
+    """WRAP-6: the unified path-resolution rule (mirrors templates/_load.py)."""
+
+    def test_tilde_expands(self):
+        out = config_loader.resolve_path("~/data", Path("/tmp"))
+        self.assertTrue(out.startswith(str(Path.home())))
+        self.assertNotIn("~", out)
+
+    def test_relative_anchors_at_anchor(self):
+        anchor = Path.cwd()
+        out = config_loader.resolve_path("sub/x", anchor)
+        self.assertEqual(out, str((anchor / "sub" / "x").resolve()))
+
+    def test_absolute_is_kept(self):
+        abs_path = str(Path.cwd().resolve())
+        self.assertEqual(config_loader.resolve_path(abs_path, Path("/elsewhere")), abs_path)
+
+
 if __name__ == "__main__":
     unittest.main()

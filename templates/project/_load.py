@@ -30,6 +30,9 @@ from pathlib import Path
 
 
 def resolve(raw, anchor):
+    # Same rule as config_loader.resolve_path (kept duplicated on purpose:
+    # this template runs before agentchattr's install dir is known, so it
+    # cannot import config_loader). Keep the two in sync.
     p = Path(str(raw)).expanduser()
     if not p.is_absolute():
         p = anchor / p

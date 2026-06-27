@@ -78,6 +78,20 @@ def apply_cli_overrides(argv: list[str] | None = None) -> None:
                 break
 
 
+def resolve_path(raw, anchor: Path) -> str:
+    """Resolve a path value: expand ~, anchor relative paths at `anchor`, normalize.
+
+    The same rule is duplicated (intentionally) in templates/project/_load.py:
+    that helper runs from a user's project dir BEFORE agentchattr's install dir
+    is located — it is what emits AGENTCHATTR_ROOT — so it cannot import this
+    module. Keep the two implementations in sync.
+    """
+    p = Path(str(raw)).expanduser()
+    if not p.is_absolute():
+        p = anchor / p
+    return str(p.resolve())
+
+
 def _apply_env_overrides(config: dict) -> None:
     """Apply AGENTCHATTR_* env vars to the config dict in-place."""
     for env_var, section, key, is_int in _ENV_OVERRIDES:
@@ -91,12 +105,9 @@ def _apply_env_overrides(config: dict) -> None:
                 print(f"  Warning: {env_var}={raw!r} is not a valid integer, ignoring")
                 continue
         else:
-            # Path values: resolve relative paths against current working dir,
-            # not against agentchattr's install directory.
-            p = Path(raw)
-            if not p.is_absolute():
-                p = (Path.cwd() / p).resolve()
-            value = str(p)
+            # Path values anchor at the current working dir (where the user ran
+            # the command), not agentchattr's install directory.
+            value = resolve_path(raw, Path.cwd())
         config.setdefault(section, {})[key] = value
 
 
