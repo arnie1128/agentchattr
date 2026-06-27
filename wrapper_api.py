@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from identity import Identity
 from server_client import ServerClient
 
 ROOT = Path(__file__).parent
@@ -106,32 +107,30 @@ def main():
     token = registration["token"]
     print(f"  Registered as: {name} (slot {registration.get('slot', '?')})")
 
-    # Thread-safe identity state (can change via heartbeat rename)
-    _lock = threading.Lock()
-    _state = {"name": name, "token": token, "working": False}
+    # Thread-safe identity (name/token can change via heartbeat rename or 409).
+    _id = Identity(name, token)
 
     def get_name():
-        with _lock:
-            return _state["name"]
+        return _id.name
 
     def get_token():
-        with _lock:
-            return _state["token"]
+        return _id.token
 
     def set_identity(new_name=None, new_token=None):
-        with _lock:
-            if new_name:
-                _state["name"] = new_name
-            if new_token:
-                _state["token"] = new_token
+        _id.update(new_name, new_token)
+
+    # Working flag is separate from identity — it tracks whether a trigger is
+    # in flight so the heartbeat reports active/idle to the server.
+    _working_lock = threading.Lock()
+    _working = [False]
 
     def set_working(val):
-        with _lock:
-            _state["working"] = val
+        with _working_lock:
+            _working[0] = val
 
     def is_working():
-        with _lock:
-            return _state["working"]
+        with _working_lock:
+            return _working[0]
 
     # Heartbeat thread — same pattern as wrapper.py
     def _heartbeat():

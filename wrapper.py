@@ -28,6 +28,7 @@ import threading
 import time
 from pathlib import Path
 
+from identity import Identity
 from server_client import ServerClient
 
 ROOT = Path(__file__).parent
@@ -322,20 +323,14 @@ def main():
         proxy, proxy_url = _start_identity_proxy(
             inject_cfg, mcp_cfg, assigned_name, assigned_token)
 
-    _identity_lock = threading.Lock()
-    _identity = {
-        "name": assigned_name,
-        "queue": data_dir / f"{assigned_name}_queue.jsonl",
-        "token": assigned_token,
-    }
+    _id = Identity(assigned_name, assigned_token)
 
     def get_identity():
-        with _identity_lock:
-            return _identity["name"], _identity["queue"]
+        name = _id.name
+        return name, data_dir / f"{name}_queue.jsonl"
 
     def get_token():
-        with _identity_lock:
-            return _identity["token"]
+        return _id.token
 
     # Rewrite MCP config when token/name changes (e.g. after 409 re-register).
     # Most CLIs won't re-read mid-session, but the file is correct for next restart.
@@ -352,19 +347,9 @@ def main():
             pass
 
     def set_runtime_identity(new_name: str | None = None, new_token: str | None = None):
-        with _identity_lock:
-            old_name = _identity["name"]
-            old_token = _identity["token"]
-            changed = False
-            if new_name and new_name != old_name:
-                _identity["name"] = new_name
-                _identity["queue"] = data_dir / f"{new_name}_queue.jsonl"
-                changed = True
-            if new_token and new_token != old_token:
-                _identity["token"] = new_token
-                changed = True
-            current_name = _identity["name"]
-            current_token = _identity["token"]
+        old_name, old_token = _id.get()
+        changed = _id.update(new_name, new_token)
+        current_name, current_token = _id.get()
 
         if changed and proxy is not None:
             proxy.agent_name = current_name
@@ -378,7 +363,7 @@ def main():
 
         return changed
 
-    queue_file = _identity["queue"]
+    queue_file = data_dir / f"{assigned_name}_queue.jsonl"
     if queue_file.exists():
         queue_file.write_text("", "utf-8")
 
