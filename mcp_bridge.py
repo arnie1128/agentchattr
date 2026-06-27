@@ -351,23 +351,40 @@ def _resolve_attachments(attachments: list[dict]) -> list[dict]:
     return resolved
 
 
-def _serialize_messages(msgs: list[dict]) -> str:
-    """Serialize store messages into MCP chat_read output shape."""
-    out = []
-    for m in msgs:
-        entry = {
-            "id": m["id"],
-            "sender": m["sender"],
-            "text": m["text"],
-            "type": m["type"],
-            "time": m["time"],
-            "channel": m.get("channel", "general"),
-        }
+def serialize_message(m: dict, *, job_id: int | None = None) -> dict:
+    """Serialize one store/job message into chat_read's MCP entry shape.
+
+    Two variants, kept field-for-field and order-for-order so each path's output
+    is byte-identical to before:
+      * channel/recent (job_id=None): carries `channel`, always emits `type`, and
+        `reply_to` when present.
+      * job read (job_id set): carries `job_id` instead of `channel`, emits `type`
+        only when set, and adds `resolved` when present.
+    """
+    entry = {"id": m["id"], "sender": m["sender"], "text": m["text"]}
+    if job_id is not None:
+        entry["time"] = m.get("time", "")
+        entry["job_id"] = job_id
+        if m.get("attachments"):
+            entry["attachments"] = _resolve_attachments(m["attachments"])
+        if m.get("type"):
+            entry["type"] = m["type"]
+        if m.get("resolved"):
+            entry["resolved"] = m["resolved"]
+    else:
+        entry["type"] = m["type"]
+        entry["time"] = m["time"]
+        entry["channel"] = m.get("channel", "general")
         if m.get("attachments"):
             entry["attachments"] = _resolve_attachments(m["attachments"])
         if m.get("reply_to") is not None:
             entry["reply_to"] = m["reply_to"]
-        out.append(entry)
+    return entry
+
+
+def _serialize_messages(msgs: list[dict]) -> str:
+    """Serialize store messages into MCP chat_read output shape."""
+    out = [serialize_message(m) for m in msgs]
     return json.dumps(out, ensure_ascii=False) if out else ""
 
 
@@ -424,15 +441,7 @@ def chat_read(
             "assignee": job.get("assignee", ""),
         }]
         for m in msgs:
-            entry = {"id": m["id"], "sender": m["sender"], "text": m["text"],
-                     "time": m.get("time", ""), "job_id": job_id}
-            if m.get("attachments"):
-                entry["attachments"] = _resolve_attachments(m["attachments"])
-            if m.get("type"):
-                entry["type"] = m["type"]
-            if m.get("resolved"):
-                entry["resolved"] = m["resolved"]
-            out.append(entry)
+            out.append(serialize_message(m, job_id=job_id))
         return json.dumps(out, ensure_ascii=False)
 
     ch = channel if channel else None

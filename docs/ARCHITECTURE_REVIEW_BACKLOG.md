@@ -35,7 +35,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | MCP-2 | P1 | verify-gated (scaffolded) | `bearer_flag` inject mode + unit tests landed; codex default switch + `mcp_proxy.py` deletion gated on one live codex run (end-of-round) |
 | MCP-3 | P2 | **done** | (b) presence pokes via `touch_presence` (STATE-1); (a) `HatStore.on_change` broadcasts → `chat_set_hat` drops `import app` |
 | NEW-MCP-1 | P2 | **done (part a)** | `uploads.save_upload` + single `ALLOWED_UPLOAD_EXTS` (neutral module); `shutil.copy2` in mcp_bridge → 0. @mention-loop unify (part b) descoped — sync/async + would re-couple mcp_bridge→app |
-| NEW-MCP-2 | P3 | open | MCP read contract serialized in 3 divergent inline shapes |
+| NEW-MCP-2 | P3 | **done** | one `serialize_message(m, *, job_id=)`; channel + job variants byte-identical (key order preserved); `"sender": m["sender"]` → 1 |
 | WRAP-1 | P1 | done | `31c6e78` `server_client.py` single HTTP contract |
 | WRAP-2 | P1 | **partial** | `436c643` `mcp_inject.py` extracted (1 of 3); tmux helpers + prompt/poll split not done |
 | WRAP-3 | P2 | partial | `9cf1af6` argparse/proxy extracted; 4 monitor closures + thread-kwargs dup still inline |
@@ -86,7 +86,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | MCP-2 | Do — scaffolded (B3) | bearer_flag mode+tests done; codex switch + proxy delete at end-of-round live confirm |
 | MCP-3 | Done (a+b) | HatStore on_change (no more MCP->app import); presence folded into STATE-1 |
 | NEW-MCP-1 | Done (part a) / descope (part b) | uploads.save_upload dedup; trigger-loop unify descoped (sync/async + coupling) |
-| NEW-MCP-2 | Do (B4) | single serialize_message under golden fixtures |
+| NEW-MCP-2 | Done (B3) | single serialize_message; golden-fixture key-order tests |
 | WRAP-1 | Done | ServerClient single HTTP contract |
 | WRAP-2 | Do (B4) | tmux helpers -> unix; pure build_trigger_prompt |
 | WRAP-3 | Do (B4) | lift monitor closures; with NEW-WRAP-1 |
@@ -337,7 +337,7 @@ Done half: `mcp_state.py` (213 lines) owns presence/activity/cursors/roles/last-
 - **Completion criteria (達成條件):** `grep -c 'shutil.copy2' mcp_bridge.py` → 0 (moved to helper) AND the allowed-ext literal appears once repo-wide AND `chat_send`'s job branch contains no inline `router.get_targets`+`trigger_sync` loop (calls the shared helper) AND upload + routing tests pass.
 - **Done (part a) — execution note:** image-upload de-dup landed via a neutral `uploads.py` (`ALLOWED_UPLOAD_EXTS` + `save_upload` path-copy); both `chat_send` branches and app.py's HTTP `upload_image` now share it (`grep shutil.copy2 mcp_bridge.py` → 0; the ext allowlist literal exists once, in uploads.py). **Part b (route the job @mention loop through SRV-5's `_trigger_targets`) is descoped by decision:** `chat_send` runs in the sync MCP-tool context and uses `trigger_sync`, while `_trigger_targets` is async and lives in app.py — routing through it would either reverse MCP-3's mcp_bridge→app decoupling or require a new neutral async/sync routing module for ~6 lines of resolution dup. Not worth the churn; the inline sync loop stays. +`test_uploads` (3).
 
-#### NEW-MCP-2 — MCP read contract serialized in 3 divergent inline shapes (P3, open) · NEW this audit
+#### NEW-MCP-2 — MCP read contract serialized in 3 divergent inline shapes (P3, done) · NEW this audit
 **Decision (定案):** **Do (Batch 4).** One `serialize_message(m, *, job_id=None)` under golden-fixture tests; preserve each variant's current field set (do not normalise the job branch's conditional `type`).
 
 `chat_read` serializes message→MCP JSON two ways: `_serialize_messages` (mcp_bridge.py:381-398) for channel/recent/resync vs an inline per-message dict-builder for job reads (453-462). Shapes diverge: channel entries carry `channel` (391) and always `type` (390); job entries carry `job_id` (455), omit `channel`, and emit `type` only conditionally (458-459). The job-header dict (439-452) is a 3rd inline shape. `grep '"sender": m\["sender"\]' mcp_bridge.py` → 2 (387, 454).
@@ -463,7 +463,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place — **fixed (B2)** | State |
 | NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk — **fixed (B2)** | State |
 | NEW-MCP-1 | P2 | `chat_send` god-function: duplicated image-upload + duplicated @mention loop — **image dup fixed (B3); loop descoped** | MCP |
-| NEW-MCP-2 | P3 | MCP read contract serialized in 3 divergent inline shapes | MCP |
+| NEW-MCP-2 | P3 | MCP read contract serialized in 3 divergent inline shapes — **fixed (B3)** | MCP |
 | NEW-WRAP-1 | P3 | 3 forwarders re-instantiate `ServerClient` inside the watcher | Wrapper |
 | NEW-FE-chatjs-split | P3 | chat.js 4254 lines / 132 fns; Tier-A leaves extractable now, Tier-B blocked on FE-3 | Frontend |
 
