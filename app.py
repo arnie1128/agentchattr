@@ -623,6 +623,33 @@ def _resolve_draft_lineage(text: str, channel: str) -> tuple[str, int]:
     return str(uuid.uuid4())[:8], 1
 
 
+def _resolve_targets(raw_targets: list[str]) -> list[str]:
+    """Resolve router targets to concrete registered instances, order-deduped.
+
+    A base family name expands to its live instances (e.g. 'claude' ->
+    'claude-prime' when slot-1 was renamed); unknown/human names pass through.
+    """
+    targets = []
+    for t in raw_targets:
+        if state.registry:
+            targets.extend(state.registry.resolve_to_instances(t))
+        else:
+            targets.append(t)
+    return list(dict.fromkeys(targets))  # dedupe, preserve order
+
+
+async def _finish_agent_rename(old_name: str, new_id: str):
+    """Common tail after a successful registry.rename: migrate runtime state,
+    rewrite historical senders, and notify clients."""
+    mcp_state.migrate_identity(old_name, new_id)
+    state.store.rename_sender(old_name, new_id)
+    await _broadcast(json.dumps({
+        "type": "agent_renamed",
+        "old_name": old_name,
+        "new_name": new_id,
+    }))
+
+
 async def _handle_new_message(msg: dict):
     """Broadcast message to web clients + check for @mention triggers."""
     # For broadcast slash commands, suppress the raw message — only the expanded
@@ -779,16 +806,7 @@ async def _handle_new_message(msg: dict):
                            "errors": ["Invalid JSON in session block"], "valid": False},
             )
 
-    raw_targets = state.router.get_targets(sender, text, channel)
-    # Resolve base family names to actual registered instances
-    # e.g. 'claude' → 'claude-prime' when slot-1 was renamed
-    targets = []
-    for t in raw_targets:
-        if state.registry:
-            targets.extend(state.registry.resolve_to_instances(t))
-        else:
-            targets.append(t)
-    targets = list(dict.fromkeys(targets))  # dedupe, preserve order
+    targets = _resolve_targets(state.router.get_targets(sender, text, channel))
 
     if state.router.is_paused(channel):
         # Only emit the loop guard notice once per pause
@@ -1199,17 +1217,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             # Rename failed (collision etc.) — fall back to label-only
                             state.registry.set_label(agent_name, new_label)
                         else:
-                            # Migrate presence + cursors to new name
-                            mcp_state.migrate_identity(agent_name, new_id)
-                            # Update sender on all historical messages
-                            state.store.rename_sender(agent_name, new_id)
-                            # Notify clients so they can update sender in DOM
-                            rename_event = json.dumps({
-                                "type": "agent_renamed",
-                                "old_name": agent_name,
-                                "new_name": new_id,
-                            })
-                            await _broadcast(rename_event)
+                            await _finish_agent_rename(agent_name, new_id)
                 continue
 
             elif event.get("type") == "name_pending":
@@ -1238,15 +1246,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             else:
                                 # Rename succeeded — confirm new name
                                 state.registry.confirm_pending(new_id)
-                                mcp_state.migrate_identity(agent_name, new_id)
-                                # Update sender on all historical messages
-                                state.store.rename_sender(agent_name, new_id)
-                                rename_event = json.dumps({
-                                    "type": "agent_renamed",
-                                    "old_name": agent_name,
-                                    "new_name": new_id,
-                                })
-                                await _broadcast(rename_event)
+                                await _finish_agent_rename(agent_name, new_id)
                 continue
 
             elif event.get("type") == "channel_create":
@@ -1770,14 +1770,7 @@ async def post_job_message(job_id: int, request: Request):
     job = state.jobs.get(job_id)
     if job:
         channel = job.get("channel", "general")
-        raw_targets = state.router.get_targets(sender, text, channel)
-        targets = []
-        for t in raw_targets:
-            if state.registry:
-                targets.extend(state.registry.resolve_to_instances(t))
-            else:
-                targets.append(t)
-        targets = list(dict.fromkeys(targets))
+        targets = _resolve_targets(state.router.get_targets(sender, text, channel))
 
         chat_msg = f"{sender}: {text}" if text else ""
         for target in targets:
