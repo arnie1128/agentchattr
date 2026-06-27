@@ -99,6 +99,20 @@ class SessionAdvanceRaceTests(unittest.TestCase):
         self.assertEqual(live["current_turn"], 1)
         self.assertEqual(self.trigger.calls[-1][0], "B")
 
+    def test_enrich_leaves_the_source_session_untouched(self):
+        """STATE-3: derived view fields must not land on the system-of-record dict."""
+        session = self.store.create(
+            "t1", "general", {"a": "A", "b": "B", "c": "C"}, "user"
+        )
+        enriched = self.engine._enrich(session)
+        # the returned copy carries the computed view fields
+        self.assertEqual(enriched["total_phases"], 1)
+        self.assertEqual(enriched["phase_name"], "P1")
+        self.assertEqual(enriched["current_agent"], "A")
+        # the source dict (what SessionStore persists) stays clean
+        for field in ("total_phases", "phase_name", "current_role", "current_agent"):
+            self.assertNotIn(field, session)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -344,19 +344,25 @@ class SessionEngine:
         return cast.get(role)
 
     def _enrich(self, session: dict) -> dict:
-        """Add computed fields to a session dict for the frontend."""
-        tmpl = self._store.get_template(session["template_id"])
+        """Return a copy of the session with computed view fields for the frontend.
+
+        Works on a shallow copy so the derived fields (total_phases/phase_name/
+        current_role/current_agent) never land on the live session dict that
+        SessionStore persists — they are view-model only.
+        """
+        enriched = dict(session)
+        tmpl = self._store.get_template(enriched["template_id"])
         if tmpl:
             phases = tmpl.get("phases", [])
-            session["total_phases"] = len(phases)
-            phase_idx = session["current_phase"]
+            enriched["total_phases"] = len(phases)
+            phase_idx = enriched["current_phase"]
             if phase_idx < len(phases):
                 phase = phases[phase_idx]
-                session["phase_name"] = phase["name"]
+                enriched["phase_name"] = phase["name"]
                 participants = phase.get("participants", [])
-                turn_idx = session["current_turn"]
+                turn_idx = enriched["current_turn"]
                 if turn_idx < len(participants):
                     role = participants[turn_idx]
-                    session["current_role"] = role
-                    session["current_agent"] = session.get("cast", {}).get(role)
-        return session
+                    enriched["current_role"] = role
+                    enriched["current_agent"] = enriched.get("cast", {}).get(role)
+        return enriched
