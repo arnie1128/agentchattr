@@ -1771,7 +1771,7 @@ async def start_session(request: Request):
         template_id = tmpl.get("id", f"draft-{draft_message_id}")
         tmpl["id"] = template_id
         tmpl["is_custom"] = True
-        state.session_store._templates[template_id] = tmpl
+        state.session_store.register_transient_template(tmpl)
 
     # Validate template exists
     if not tmpl:

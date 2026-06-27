@@ -84,6 +84,14 @@ class SessionStore:
     def get_template(self, template_id: str) -> dict | None:
         return self._templates.get(template_id)
 
+    def register_transient_template(self, tmpl: dict) -> None:
+        """Register an in-memory template (not persisted), keyed by tmpl['id'].
+
+        For draft-derived session templates that live only for this process;
+        persisted custom templates use save_custom_template.
+        """
+        self._templates[tmpl["id"]] = tmpl
+
     def save_custom_template(self, tmpl: dict) -> dict:
         custom_path = self._path.parent / "custom_templates.json"
         custom = []
