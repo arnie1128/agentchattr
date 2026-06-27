@@ -107,5 +107,34 @@ class ExpanduserPathTests(unittest.TestCase):
         self.assertFalse(expanded.is_absolute())
 
 
+class BearerFlagInjectTests(unittest.TestCase):
+    """The proxy-free codex inject path (MCP-2): direct URL + bearer-from-env."""
+
+    def test_bearer_flag_emits_url_and_token_env_flags_token_out_of_argv(self):
+        from mcp_inject import _apply_mcp_inject, SERVER_NAME
+
+        cfg = {"mcp_inject": "bearer_flag", "mcp_transport": "http"}
+        args, env, _ = _apply_mcp_inject(
+            cfg, "codex", Path(tempfile.mkdtemp()), None,
+            token="tok-xyz", mcp_cfg={"http_port": 8200},
+        )
+        joined = " ".join(args)
+        self.assertIn(f'mcp_servers.{SERVER_NAME}.url="http://127.0.0.1:8200/mcp"', joined)
+        self.assertIn(f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="AGENTCHATTR_TOKEN"', joined)
+        self.assertEqual(env.get("AGENTCHATTR_TOKEN"), "tok-xyz")
+        self.assertNotIn("tok-xyz", joined)  # token never in argv
+
+    def test_bearer_flag_custom_env_var(self):
+        from mcp_inject import _apply_mcp_inject
+
+        cfg = {"mcp_inject": "bearer_flag", "mcp_bearer_env_var": "MY_TOK"}
+        args, env, _ = _apply_mcp_inject(
+            cfg, "codex", Path(tempfile.mkdtemp()), None,
+            token="t", mcp_cfg={"http_port": 8200},
+        )
+        self.assertIn('bearer_token_env_var="MY_TOK"', " ".join(args))
+        self.assertEqual(env.get("MY_TOK"), "t")
+
+
 if __name__ == "__main__":
     unittest.main()

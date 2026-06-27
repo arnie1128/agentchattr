@@ -143,7 +143,7 @@ _BUILTIN_DEFAULTS: dict[str, dict] = {
     },
 }
 
-_VALID_INJECT_MODES = {"settings_file", "env", "flag", "proxy_flag", "env_content"}
+_VALID_INJECT_MODES = {"settings_file", "env", "flag", "proxy_flag", "env_content", "bearer_flag"}
 
 
 def _resolve_mcp_inject(agent: str, agent_cfg: dict) -> dict:
@@ -279,6 +279,20 @@ def _apply_mcp_inject(
                                   '-c mcp_servers.{server}.url="{url}"')
         expanded = template.format(server=SERVER_NAME, url=proxy_url or "")
         launch_args = expanded.split()
+
+    elif mode == "bearer_flag":
+        # Direct CLI-flag inject (codex, MCP-2): point at the REAL server URL and
+        # have the agent read its bearer token from an env var, keeping the token
+        # out of argv. This is the proxy-free replacement for proxy_flag. It is NOT
+        # yet codex's default — that switch and the mcp_proxy.py deletion are gated
+        # on a single live codex run confirming the config keys (end-of-round).
+        token_env = inject_cfg.get("mcp_bearer_env_var", "AGENTCHATTR_TOKEN")
+        launch_args = [
+            "-c", f'mcp_servers.{SERVER_NAME}.url="{server_url}"',
+            "-c", f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="{token_env}"',
+        ]
+        if token:
+            inject_env[token_env] = token
 
     return launch_args, inject_env, settings_path
 
