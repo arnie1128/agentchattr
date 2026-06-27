@@ -28,6 +28,7 @@ from session_engine import SessionEngine
 import commands
 import mcp_state
 import presence_monitor
+import uploads
 import schedule_runner
 import settings_store
 from app_state import state
@@ -938,7 +939,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # --- REST endpoints ---
 
-ALLOWED_UPLOAD_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB default
 
 
@@ -948,7 +948,7 @@ async def upload_image(file: UploadFile = File(...)):
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     ext = Path(file.filename).suffix or ".png"
-    if ext.lower() not in ALLOWED_UPLOAD_EXTS:
+    if ext.lower() not in uploads.ALLOWED_UPLOAD_EXTS:
         return JSONResponse({"error": f"unsupported file type: {ext}"}, status_code=400)
 
     content = await file.read()

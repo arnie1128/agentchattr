@@ -15,6 +15,7 @@ from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
 
 import mcp_state
+import uploads
 from app_state import state
 
 log = logging.getLogger(__name__)
@@ -233,20 +234,10 @@ def chat_send(
         # Handle image attachment for job messages
         job_attachments = None
         if image_path:
-            import shutil, uuid
-            src = Path(image_path)
-            if not src.exists():
-                return f"Image not found: {image_path}"
-            if src.suffix.lower() not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'):
-                return f"Unsupported image type: {src.suffix}"
-            raw_dir = "./uploads"
-            if state.config and "images" in state.config:
-                raw_dir = state.config["images"].get("upload_dir", raw_dir)
-            upload_dir = Path(raw_dir)
-            upload_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"{uuid.uuid4().hex[:8]}{src.suffix}"
-            shutil.copy2(str(src), str(upload_dir / filename))
-            job_attachments = [{"name": src.name, "url": f"/uploads/{filename}"}]
+            attachment, err = uploads.save_upload(image_path, state.config)
+            if err:
+                return err
+            job_attachments = [attachment]
         msg = state.jobs.add_message(job_id, sender, text, msg_type=msg_type,
                                attachments=job_attachments)
         if msg is None:
@@ -281,25 +272,10 @@ def chat_send(
 
     attachments = []
     if image_path:
-        import shutil
-        import uuid
-        from pathlib import Path
-        src = Path(image_path)
-        if not src.exists():
-            return f"Image not found: {image_path}"
-        if src.suffix.lower() not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'):
-            return f"Unsupported image type: {src.suffix}"
-        
-        # Get upload dir from config (fall back to ./uploads)
-        raw_dir = "./uploads"
-        if state.config and "images" in state.config:
-            raw_dir = state.config["images"].get("upload_dir", raw_dir)
-        upload_dir = Path(raw_dir)
-        
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{uuid.uuid4().hex[:8]}{src.suffix}"
-        shutil.copy2(str(src), str(upload_dir / filename))
-        attachments.append({"name": src.name, "url": f"/uploads/{filename}"})
+        attachment, err = uploads.save_upload(image_path, state.config)
+        if err:
+            return err
+        attachments.append(attachment)
 
     reply_id = reply_to if reply_to >= 0 else None
     if reply_id is not None and state.store.get_by_id(reply_id) is None:
