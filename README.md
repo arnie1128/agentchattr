@@ -577,7 +577,6 @@ Available models: `MiniMax-M2.7` (default), `MiniMax-M2.7-highspeed` (faster), `
 | `router.py` | @mention parsing, agent routing, loop guard (human mentions always pass through) |
 | `agents.py` | Writes trigger queue files for wrapper to pick up |
 | `mcp_bridge.py` | MCP tool definitions (`chat_send`, `chat_read`, `chat_claim`, etc.) |
-| `mcp_proxy.py` | Per-instance MCP proxy — injects sender identity into all tool calls |
 | `wrapper.py` | Cross-platform dispatcher — registration, auto-trigger, heartbeat, activity monitor |
 | `wrapper_windows.py` | Windows: keystroke injection + screen buffer activity detection |
 | `wrapper_unix.py` | Mac/Linux: tmux keystroke injection + pane capture activity detection |

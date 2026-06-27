@@ -115,7 +115,7 @@ class BearerFlagInjectTests(unittest.TestCase):
 
         cfg = {"mcp_inject": "bearer_flag", "mcp_transport": "http"}
         args, env, _ = _apply_mcp_inject(
-            cfg, "codex", Path(tempfile.mkdtemp()), None,
+            cfg, "codex", Path(tempfile.mkdtemp()),
             token="tok-xyz", mcp_cfg={"http_port": 8200},
         )
         joined = " ".join(args)
@@ -129,11 +129,25 @@ class BearerFlagInjectTests(unittest.TestCase):
 
         cfg = {"mcp_inject": "bearer_flag", "mcp_bearer_env_var": "MY_TOK"}
         args, env, _ = _apply_mcp_inject(
-            cfg, "codex", Path(tempfile.mkdtemp()), None,
+            cfg, "codex", Path(tempfile.mkdtemp()),
             token="t", mcp_cfg={"http_port": 8200},
         )
         self.assertIn('bearer_token_env_var="MY_TOK"', " ".join(args))
         self.assertEqual(env.get("MY_TOK"), "t")
+
+    def test_codex_default_is_bearer_flag_proxy_free(self):
+        # MCP-2: codex's built-in default is now bearer_flag, not proxy_flag.
+        from mcp_inject import _resolve_mcp_inject, _apply_mcp_inject, SERVER_NAME
+
+        cfg = _resolve_mcp_inject("codex", {})
+        self.assertEqual(cfg.get("mcp_inject"), "bearer_flag")
+        args, env, _ = _apply_mcp_inject(
+            cfg, "codex", Path(tempfile.mkdtemp()),
+            token="tok", mcp_cfg={"http_port": 8200},
+        )
+        joined = " ".join(args)
+        self.assertIn(f'mcp_servers.{SERVER_NAME}.bearer_token_env_var="AGENTCHATTR_TOKEN"', joined)
+        self.assertEqual(env.get("AGENTCHATTR_TOKEN"), "tok")
 
 
 if __name__ == "__main__":

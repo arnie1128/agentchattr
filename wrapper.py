@@ -212,33 +212,6 @@ def _parse_wrapper_args(agent_names: list[str]):
     return parser.parse_known_args()
 
 
-def _start_identity_proxy(inject_cfg: dict, mcp_cfg: dict, agent_name: str, token: str):
-    """Start the local MCP identity proxy for proxy-based agents.
-
-    Returns (proxy, proxy_url). Exits the process if the proxy fails to start.
-    """
-    from mcp_proxy import McpIdentityProxy
-
-    transport = inject_cfg.get("mcp_transport", "http")
-    if transport == "sse":
-        upstream_base = f"http://127.0.0.1:{mcp_cfg.get('sse_port', 8201)}"
-        proxy_path = "/sse"
-    else:
-        upstream_base = f"http://127.0.0.1:{mcp_cfg.get('http_port', 8200)}"
-        proxy_path = "/mcp"
-
-    proxy = McpIdentityProxy(
-        upstream_base=upstream_base,
-        upstream_path=proxy_path,
-        agent_name=agent_name,
-        instance_token=token,
-    )
-    if proxy.start() is False:
-        print("  Failed to start MCP proxy.")
-        sys.exit(1)
-    return proxy, f"{proxy.url}{proxy_path}"
-
-
 def main():
     import urllib.error
 
@@ -281,23 +254,15 @@ def main():
     assigned_token = registration["token"]
     print(f"  Registered as: {assigned_name} (slot {registration.get('slot', '?')})")
 
-    proxy = None
-    proxy_url = None
-
-    # Resolve MCP injection mode to determine if a proxy is needed.
-    # Direct-connect modes (settings_file, env, flag) don't need a proxy.
-    # proxy_flag mode needs a proxy. No mcp_inject = proxy fallback.
+    # Resolve the MCP injection mode. Every agent direct-injects (settings file,
+    # CLI flag, env var, or bearer-from-env); the server authenticates the token,
+    # so there is no local proxy.
     inject_cfg = _resolve_mcp_inject(agent, agent_cfg)
     inject_mode = inject_cfg.get("mcp_inject", "")
     if inject_mode and inject_mode not in _VALID_INJECT_MODES:
         print(f"  Error: unknown mcp_inject mode '{inject_mode}' for agent '{agent}'.")
         print(f"  Valid modes: {', '.join(sorted(_VALID_INJECT_MODES))}")
         sys.exit(1)
-    needs_proxy = inject_mode in ("proxy_flag", "") or not inject_mode
-
-    if needs_proxy:
-        proxy, proxy_url = _start_identity_proxy(
-            inject_cfg, mcp_cfg, assigned_name, assigned_token)
 
     _id = Identity(assigned_name, assigned_token)
 
@@ -311,11 +276,11 @@ def main():
     # Rewrite MCP config when token/name changes (e.g. after 409 re-register).
     # Most CLIs won't re-read mid-session, but the file is correct for next restart.
     def _rewrite_mcp_config(instance_name: str, new_token: str):
-        if not inject_mode or needs_proxy:
-            return  # proxy-based agents don't have config files to rewrite
+        if not inject_mode:
+            return  # nothing to rewrite for agents with no inject config
         try:
             _apply_mcp_inject(
-                inject_cfg, instance_name, data_dir, proxy_url,
+                inject_cfg, instance_name, data_dir,
                 token=new_token, mcp_cfg=mcp_cfg,
                 project_dir=(ROOT / cwd).resolve(),
             )
@@ -327,9 +292,6 @@ def main():
         changed = _id.update(new_name, new_token)
         current_name, current_token = _id.get()
 
-        if changed and proxy is not None:
-            proxy.agent_name = current_name
-            proxy.token = current_token
         if changed:
             if new_name and new_name != old_name:
                 print(f"  Identity updated: {old_name} -> {new_name}")
@@ -365,7 +327,6 @@ def main():
         agent_cfg=agent_cfg,
         instance_name=assigned_name,
         data_dir=data_dir,
-        proxy_url=proxy_url,
         extra_args=extra,
         env=env,
         token=assigned_token,
@@ -374,12 +335,9 @@ def main():
     )
 
     print(f"  === {assigned_name.capitalize()} Chat Wrapper ===")
-    if not needs_proxy:
-        print(f"  MCP: direct connect ({inject_mode}) with bearer auth")
-        if mcp_settings_path:
-            print(f"  Config: {mcp_settings_path}")
-    elif proxy_url:
-        print(f"  Local MCP proxy: {proxy_url}")
+    print(f"  MCP: direct connect ({inject_mode}) with bearer auth")
+    if mcp_settings_path:
+        print(f"  Config: {mcp_settings_path}")
     print(f"  @{assigned_name} mentions auto-inject MCP reads")
     print(f"  Starting {command} in {project_dir} (cwd source: {cwd_source})\n")
 
@@ -532,9 +490,6 @@ def main():
             print(f"  Deregistered {current_name}")
         except Exception:
             pass
-
-        if proxy is not None:
-            proxy.stop()
 
     print("  Wrapper stopped.")
 

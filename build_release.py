@@ -20,7 +20,6 @@ INCLUDE_FILES = [
     "config_loader.py",
     "jobs.py",
     "mcp_bridge.py",
-    "mcp_proxy.py",
     "registry.py",
     "router.py",
     "rules.py",

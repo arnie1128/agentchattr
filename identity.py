@@ -8,7 +8,7 @@ several threads (heartbeat, queue watcher, activity monitor), so it lives behind
 a lock here instead of as a bare dict guarded ad hoc in each wrapper.
 
 Each wrapper keeps its own side effects on a change (the CLI wrapper rewrites
-the MCP config and points the proxy at the new identity; the API wrapper just
+the MCP config for the new identity; the API wrapper just
 logs) and any extra per-wrapper state (the CLI's derived queue path, the API's
 working flag) — this owns only the name/token pair and its lock.
 """

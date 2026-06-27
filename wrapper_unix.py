@@ -187,7 +187,7 @@ def run_agent(
         # Check: did the agent exit, or did the user just detach?
         if _session_exists(session_name):
             # Session still alive — user detached, agent running in background.
-            # Keep the wrapper alive so the local proxy and heartbeats survive.
+            # Keep the wrapper alive so heartbeats survive.
             print(f"\n  Detached. {agent.capitalize()} still running in tmux.")
             print(f"  Reattach: tmux attach -t {session_name}")
             while _session_exists(session_name):
