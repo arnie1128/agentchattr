@@ -25,7 +25,7 @@ Store.set('channelList', ['general']);  // single owner is Store (FE-3)
 Store.set('channelUnread', {});  // { channelName: count } — single owner is Store (FE-3)
 let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
-let colorOverrides = JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}');
+Store.set('colorOverrides', JSON.parse(localStorage.getItem('agentchattr-color-overrides') || '{}'));  // single owner is Store (FE-2)
 let schedulesList = [];  // array of schedule objects from server
 
 // Expose the remaining non-state shims that extracted modules read via window.*
@@ -676,16 +676,17 @@ function resolveAgent(name) {
 function getColor(sender) {
     const s = sender.toLowerCase();
     if (s === 'system') return 'var(--system-color)';
+    const co = Store.get('colorOverrides');
     const resolved = resolveAgent(s);
     if (resolved) {
-        if (colorOverrides[resolved]) return colorOverrides[resolved];
+        if (co[resolved]) return co[resolved];
         return Store.get('agentConfig')[resolved].color;
     }
     // Check overrides for unresolved names too
-    if (colorOverrides[s]) return colorOverrides[s];
+    if (co[s]) return co[s];
     // Fall back to base agent colors (for historical messages from offline agents)
     const base = s.replace(/-\d+$/, '');
-    if (colorOverrides[base]) return colorOverrides[base];
+    if (co[base]) return co[base];
     if (base in baseColors) return baseColors[base].color;
     return 'var(--user-color)';
 }
@@ -951,7 +952,7 @@ function buildStatusPills() {
         if (cfg.state === 'pending') pill.classList.add('pending');
         pill.id = `status-${name}`;
         pill.title = `@${name}`;  // Tooltip: canonical name for manual @-typing
-        pill.style.setProperty('--agent-color', colorOverrides[name] || cfg.color || '#4ade80');
+        pill.style.setProperty('--agent-color', Store.get('colorOverrides')[name] || cfg.color || '#4ade80');
         pill.innerHTML = `<span class="status-dot"></span><span class="status-label">${escapeHtml(cfg.label || name)}</span>`;
         // Left-click to toggle pill popover (rename + role + color)
         pill.addEventListener('click', (e) => {
@@ -1107,7 +1108,7 @@ function showPillPopover(pillEl, opts) {
     const popover = document.createElement('div');
     popover.className = 'pill-popover';
     popover.dataset.agent = opts.name;
-    popover.style.setProperty('--agent-color', colorOverrides[opts.name] || opts.color);
+    popover.style.setProperty('--agent-color', Store.get('colorOverrides')[opts.name] || opts.color);
 
     const currentRole = (_agentRoles[opts.name] || '').toLowerCase();
     const roleChipsHtml = ROLE_PRESETS.map(p =>
@@ -1140,7 +1141,7 @@ function showPillPopover(pillEl, opts) {
         </div>
         ${(() => {
             // Resolve the actual current color: override → pill CSS var → config → fallback
-            let current = colorOverrides[opts.name] || '';
+            let current = Store.get('colorOverrides')[opts.name] || '';
             if (!current && pillEl) {
                 const computed = getComputedStyle(pillEl).getPropertyValue('--agent-color').trim();
                 if (computed && !computed.startsWith('var(')) current = computed;
@@ -1243,8 +1244,8 @@ function showPillPopover(pillEl, opts) {
 
     // --- Color picker handlers ---
     const applyColorOverride = (color) => {
-        colorOverrides[opts.name] = color;
-        localStorage.setItem('agentchattr-color-overrides', JSON.stringify(colorOverrides));
+        Store.get('colorOverrides')[opts.name] = color;
+        localStorage.setItem('agentchattr-color-overrides', JSON.stringify(Store.get('colorOverrides')));
         // Update pill color
         const pillToUpdate = document.getElementById(`status-${opts.name}`);
         if (pillToUpdate) pillToUpdate.style.setProperty('--agent-color', color);
@@ -1286,8 +1287,8 @@ function showPillPopover(pillEl, opts) {
     if (resetBtn) {
         resetBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            delete colorOverrides[opts.name];
-            localStorage.setItem('agentchattr-color-overrides', JSON.stringify(colorOverrides));
+            delete Store.get('colorOverrides')[opts.name];
+            localStorage.setItem('agentchattr-color-overrides', JSON.stringify(Store.get('colorOverrides')));
             const defaultColor = opts.color || '#888';
             const pillToUpdate = document.getElementById(`status-${opts.name}`);
             if (pillToUpdate) pillToUpdate.style.setProperty('--agent-color', defaultColor);
@@ -2770,7 +2771,7 @@ function buildMentionToggles() {
         btn.dataset.agent = name;
         btn.textContent = `@${cfg.label || name}`;
         btn.title = `@${name}`;  // Tooltip: canonical name
-        btn.style.setProperty('--agent-color', colorOverrides[name] || cfg.color);
+        btn.style.setProperty('--agent-color', Store.get('colorOverrides')[name] || cfg.color);
         // Restore active state for mentions that survived the rebuild
         if (activeMentions.has(name)) {
             btn.classList.add('active');
