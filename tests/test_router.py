@@ -65,5 +65,20 @@ class RouterAllMentionTests(unittest.TestCase):
         self.assertEqual(router.parse_mentions("@all anyone?"), [])
 
 
+class ContinueRoutingScopeTests(unittest.TestCase):
+    """continue_routing must resume only the named channel (NEW-SRV-5)."""
+
+    def _paused(self):
+        return {"hop_count": 5, "paused": True, "guard_emitted": True}
+
+    def test_continue_resumes_only_named_channel(self):
+        router = Router(["claude"], default_mention="none", max_hops=1)
+        router._channels["general"] = self._paused()
+        router._channels["dev"] = self._paused()
+        router.continue_routing("dev")
+        self.assertFalse(router.is_paused("dev"))
+        self.assertTrue(router.is_paused("general"))  # the no-channel bug would resume general
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-SRV-2 | P1 | **done** | run.py boot-resume reads `state.session_engine` via a testable `resume_sessions_on_boot()` + startup smoke test |
 | NEW-SRV-3 | P3 | **done** | `version_check` local renamed to `release_state`; singleton no longer shadowed |
 | NEW-SRV-4 | P3 | **done** | public `SessionStore.register_transient_template`; no more `_templates` poke from app.py |
-| NEW-SRV-5 | P3 | open | `/continue` handled in two places; WS path ignores the channel (app.py:847) |
+| NEW-SRV-5 | P3 | **done (fix)** | WS `/continue` now passes `continue_routing(channel)` — resumes the typed channel, not always general. Collapse of the two handlers descoped (distinct entry points: human-WS vs agent-MCP) |
 | STATE-1 | P1 | **done** | one `reachable()`/`reachable_names()` predicate (app.py) + presence ops encapsulated in `mcp_state` (sweep/last_seen/pop_renamed/clear_activity_offline/report_active); 0 private pokes in app.py/mcp_bridge; +MCP-3(b) |
 | STATE-3 | P2 | done | `0d61519` `_enrich` copies; view fields stay off the record |
 | STATE-4 | P2 | **done** | (a) registry rename-save atomic (with NEW-STATE-PERSIST-1); (b) O(n) jobs rewrite accepted + documented in `jobs._save` (bounded work-threads) |
@@ -73,7 +73,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-SRV-2 | Done (B0) | fixed: run.py resume_sessions_on_boot() reads state.session_engine + smoke test |
 | NEW-SRV-3 | Done (B0) | renamed local to release_state |
 | NEW-SRV-4 | Done (B4) | register_transient_template (in-memory) |
-| NEW-SRV-5 | Do | fix channel-arg now (correctness); collapse dup B4 |
+| NEW-SRV-5 | Done (fix) / descope (collapse) | channel-arg bug fixed; two handlers are distinct entry points, not duplicates |
 | STATE-1 | Done (B1) | one reachable() predicate; presence encapsulated in-place in mcp_state (see note) |
 | STATE-3 | Done | _enrich copies |
 | STATE-4 | Done (a=do / b=accept) | rename-save atomic; O(n) accepted+documented in jobs._save |
@@ -235,7 +235,7 @@ The hats-persistence sub-item is **already satisfied by SRV-6** (HatStore owns `
 - **Fix scope (修正範圍):** `session_store.py` ~3-line method; `app.py:1914` repointed. 2 files, 1 site.
 - **Completion criteria (達成條件):** `grep -n '\.session_store\._templates' app.py` → 0; the start-from-draft path uses a public method; no `SessionStore` private attribute is accessed from app.py.
 
-#### NEW-SRV-5 — `/continue` handled in two places; WS path ignores the channel (P3, open) · NEW this audit
+#### NEW-SRV-5 — `/continue` handled in two places; WS path ignores the channel (P3, done) · NEW this audit
 **Decision (定案):** **Do — fix the channel-arg now** (a real correctness defect: `/continue` unpauses `general` regardless of channel), **collapse the duplicate path in Batch 4.**
 
 `/continue` is handled twice with different behavior: `websocket_endpoint` (app.py:847) calls `continue_routing()` with **no** channel argument (defaults to `general`) while posting the resume notice in the actual `channel` (848) — so `/continue` typed in a non-general channel unpauses `general` but announces resume in the typed channel. The message-callback path `_handle_new_message` (app.py:608) calls `continue_routing(channel)` correctly. Duplicated control-command logic plus a real channel-mismatch defect.
@@ -459,7 +459,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | **NEW-SRV-6** | **P1** | `agents.py` imported is_online/is_active/get_role from `mcp_bridge` after MCP-3 moved them to `mcp_state` → ImportError in every `broadcast_status` — **fixed (B0)** | Server / MCP |
 | NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) — **fixed (B0)** | Server |
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly — **fixed (B4)** | Server |
-| NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel | Server |
+| NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel — **channel bug fixed (B4); collapse descoped** | Server |
 | NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place — **fixed (B2)** | State |
 | NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk — **fixed (B2)** | State |
 | NEW-MCP-1 | P2 | `chat_send` god-function: duplicated image-upload + duplicated @mention loop — **image dup fixed (B3); loop descoped** | MCP |

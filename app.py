@@ -733,7 +733,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await broadcast_clear(channel=channel)
                         continue
                     if cmd == "/continue":
-                        state.router.continue_routing()
+                        state.router.continue_routing(channel)  # NEW-SRV-5: resume the typed channel, not always general
                         state.store.add("system", "Resuming agent conversation...", msg_type="system", channel=channel)
                         await broadcast_status()
                         continue
