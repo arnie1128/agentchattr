@@ -308,7 +308,7 @@ function jumpToSessionChannel() {
 // ---------------------------------------------------------------------------
 
 function _getAvailableAgents() {
-    return Object.entries(window.agentConfig || {})
+    return Object.entries(Store.get('agentConfig') || {})
         .filter(([_, cfg]) => cfg.state === 'active')
         .map(([name]) => name);
 }
@@ -436,7 +436,7 @@ async function sendDesignRequest() {
     const modal = document.getElementById('session-launcher-modal');
     if (modal) modal.remove();
     try {
-        const res = await api.post('/api/sessions/request-draft', { agent: agent, description: desc, channel: window.activeChannel, sender: window.username });
+        const res = await api.post('/api/sessions/request-draft', { agent: agent, description: desc, channel: window.activeChannel, sender: Store.get('username') });
         if (!res.ok) alert('Failed to send design request (HTTP ' + res.status + ')');
     } catch (e) {
         alert('Error: ' + e.message);
@@ -451,7 +451,7 @@ function showCastPreview(templateId) {
     const cast = _autoCast(tmpl.roles || [], agents);
 
     // All possible assignees: agents + "user" (self) + "none" (skip)
-    const assignees = [...agents, window.username];
+    const assignees = [...agents, Store.get('username')];
 
     const castStep = document.getElementById('session-step-cast');
     const tmplStep = document.getElementById('session-step-templates');
@@ -498,7 +498,7 @@ async function launchSessionWithCast(templateId) {
             channel: window.activeChannel,
             cast: cast,
             goal: goal,
-            started_by: window.username,
+            started_by: Store.get('username'),
         });
         if (!res.ok) {
             const data = await res.json();
@@ -618,7 +618,7 @@ function runDraft(msgId) {
 function showDraftCastPreview(tmpl, draftMsgId) {
     const agents = _getAvailableAgents();
     const cast = _autoCast(tmpl.roles || [], agents);
-    const assignees = [...agents, window.username];
+    const assignees = [...agents, Store.get('username')];
 
     let existing = document.getElementById('session-launcher-modal');
     if (existing) existing.remove();
@@ -666,7 +666,7 @@ async function launchDraftSession(draftMsgId) {
             channel: window.activeChannel,
             cast: cast,
             goal: goal,
-            started_by: window.username,
+            started_by: Store.get('username'),
         });
         if (!res.ok) {
             const data = await res.json();
@@ -806,7 +806,7 @@ function submitDraftChanges(draftId, proposedBy, msgId) {
     if (window.ws && window.ws.readyState === WebSocket.OPEN) {
         wsClient.send('message', {
             text: text,
-            sender: window.username,
+            sender: Store.get('username'),
             channel: window.activeChannel,
         });
     } else {
