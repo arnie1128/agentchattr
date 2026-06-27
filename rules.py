@@ -5,6 +5,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
+import atomic_io
 
 MAX_ACTIVE_RULES = 10
 MAX_TEXT_CHARS = 160
@@ -65,10 +66,7 @@ class RuleStore:
             "epoch": self._epoch,
             "rules": self._rules,
         }
-        self._path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            "utf-8",
-        )
+        atomic_io.write_json_atomic(self._path, data)
 
     def on_change(self, callback):
         """Register a callback(action, rule) fired on any change.

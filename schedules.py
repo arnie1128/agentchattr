@@ -6,6 +6,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
+import atomic_io
 
 
 # Interval parsing: "every 30m", "every 1h", "every 2h", "daily at 09:00"
@@ -105,10 +106,7 @@ class ScheduleStore:
             self._schedules = []
 
     def _save(self):
-        self._path.write_text(
-            json.dumps(self._schedules, indent=2, ensure_ascii=False) + "\n",
-            "utf-8",
-        )
+        atomic_io.write_json_atomic(self._path, self._schedules)
 
     def on_change(self, callback):
         """Register callback(action, schedule) on any change."""

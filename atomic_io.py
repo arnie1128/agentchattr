@@ -26,6 +26,24 @@ def write_json_atomic(path, data, *, indent: int = 2,
     if trailing_newline:
         text += "\n"
 
+    _write_text_atomic(path, text)
+
+
+def write_jsonl_atomic(path, rows, *, ensure_ascii: bool = False) -> None:
+    """Write an iterable of objects as JSON Lines to ``path`` atomically.
+
+    Same tmp + fsync + ``os.replace`` guarantee as :func:`write_json_atomic`, for
+    append-style logs that are periodically rewritten in full from memory (e.g.
+    the message store). A bare ``open(path, "w")`` truncate-then-write corrupts
+    the whole log if the process dies mid-rewrite.
+    """
+    path = Path(path)
+    text = "".join(json.dumps(r, ensure_ascii=ensure_ascii) + "\n" for r in rows)
+    _write_text_atomic(path, text)
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a temp sibling + fsync + os.replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:

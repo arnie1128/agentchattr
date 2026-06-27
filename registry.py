@@ -13,6 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+import atomic_io
 
 from naming import derive_color, family_conflict, next_free_slot, parse_name
 
@@ -78,14 +79,11 @@ class RuntimeRegistry:
                 self._renames = {}
 
     def _save_renames(self):
-        """Persist renames to disk. Must be called outside the lock."""
+        """Persist renames to disk atomically. Must be called outside the lock."""
         try:
-            self._data_dir.mkdir(parents=True, exist_ok=True)
-            tmp = self._renames_path().with_suffix(".tmp")
             with self._lock:
                 data = dict(self._renames)
-            tmp.write_text(json.dumps(data), "utf-8")
-            tmp.replace(self._renames_path())
+            atomic_io.write_json_atomic(self._renames_path(), data)
         except Exception:
             pass
 

@@ -97,7 +97,7 @@ class SessionStore:
         saved["is_custom"] = True
         custom = [t for t in custom if t.get("id") != saved.get("id")]
         custom.append(saved)
-        custom_path.write_text(json.dumps(custom, indent=2, ensure_ascii=False) + "\n", "utf-8")
+        write_json_atomic(custom_path, custom)
         self._templates[saved["id"]] = saved
         return saved
 
@@ -116,7 +116,7 @@ class SessionStore:
 
         new_custom = [t for t in custom if t.get("id") != template_id]
         if len(new_custom) != len(custom):
-            custom_path.write_text(json.dumps(new_custom, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            write_json_atomic(custom_path, new_custom)
 
         self._templates.pop(template_id, None)
         return True

@@ -6,6 +6,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
+import atomic_io
 
 
 class MessageStore:
@@ -107,12 +108,12 @@ class MessageStore:
                     return
 
     def _rewrite(self):
-        """Rewrite the full JSONL file from memory (used after bulk edits)."""
-        with open(self._path, "w", encoding="utf-8") as f:
-            for m in self._messages:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        """Rewrite the full JSONL file from memory (used after bulk edits).
+
+        Atomic (tmp + fsync + os.replace) so a crash mid-rewrite can't truncate
+        the whole message log — the old in-place "w" open did exactly that.
+        """
+        atomic_io.write_jsonl_atomic(self._path, self._messages)
 
     def resolve_decision(self, msg_id: int, chosen: str):
         """Atomically resolve an inline decision card.
@@ -303,9 +304,8 @@ class MessageStore:
                 self._todos = {}
 
     def _save_todos(self):
-        self._todos_path.write_text(
-            json.dumps({str(k): v for k, v in self._todos.items()}, indent=2),
-            "utf-8"
+        atomic_io.write_json_atomic(
+            self._todos_path, {str(k): v for k, v in self._todos.items()}
         )
 
     def on_todo(self, callback):

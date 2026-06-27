@@ -9,11 +9,12 @@ presence reaper) import this module and read state via mcp_state.X.
 """
 
 import json
-import os
 import time
 import logging
 import threading
 from pathlib import Path
+
+import atomic_io
 
 log = logging.getLogger(__name__)
 
@@ -58,16 +59,13 @@ def _load_cursors():
 
 
 def _save_cursors():
-    """Persist cursor state to disk atomically (write temp + rename)."""
+    """Persist cursor state to disk atomically."""
     if _CURSORS_FILE is None:
         return
     try:
         with _cursors_lock:
             snapshot = dict(_cursors)
-        _CURSORS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _CURSORS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(snapshot), "utf-8")
-        os.replace(tmp, _CURSORS_FILE)  # atomic on POSIX
+        atomic_io.write_json_atomic(_CURSORS_FILE, snapshot)
     except Exception:
         log.warning("Failed to save cursor state to %s", _CURSORS_FILE)
 
@@ -88,10 +86,7 @@ def _save_roles():
     if _ROLES_FILE is None:
         return
     try:
-        _ROLES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _ROLES_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(_roles), "utf-8")
-        os.replace(tmp, _ROLES_FILE)
+        atomic_io.write_json_atomic(_ROLES_FILE, _roles)
     except Exception:
         log.warning("Failed to save roles to %s", _ROLES_FILE)
 

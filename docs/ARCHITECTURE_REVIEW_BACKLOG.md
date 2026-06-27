@@ -29,7 +29,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | STATE-5 | P2 | partial | `6e72c2e` `naming.py` pure leaves only; view/auth/4× policy orchestration remain in registry |
 | STATE-6 | P3 | done | `037695e` `routing_paused` rename + single `_rewrite` |
 | STATE-7 | P3 | deferred | **DECISION: defer** (YAGNI — no second backend; reactivate on a scheduled backend change) |
-| NEW-STATE-PERSIST-1 | P2 | **open** | ~9 store-save sites still bare `write_text` / no-fsync; `store._rewrite` truncates in place |
+| NEW-STATE-PERSIST-1 | P2 | **done** | 9 saves routed through `write_json_atomic`; `store._rewrite` → new `write_jsonl_atomic` (tmp+fsync+replace); orphan `os` dropped from mcp_state; +STATE-4(a) |
 | NEW-STATE-PERSIST-2 | P3 | open | `JobStore.list_all` is a read that writes to disk (jobs.py:91-93) |
 | MCP-1 | P1 | done | `ad6e7bf` token-derived identity; proxy forwards raw bytes |
 | MCP-2 | P1 | open (verify-gated) | codex direct-bearer inject → delete `mcp_proxy.py`; needs one live codex run |
@@ -80,7 +80,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | STATE-5 | Do / Accept | NamingPolicy + view move; resolve_token & _inst_dict stay |
 | STATE-6 | Done | routing_paused rename; single _rewrite |
 | STATE-7 | Defer | speculative abstraction; reactivate on a real backend change |
-| NEW-STATE-PERSIST-1 | Do (B2) | durability correctness; atomic adoption + write_jsonl_atomic |
+| NEW-STATE-PERSIST-1 | Done (B2) | atomic adoption (9 sites) + write_jsonl_atomic; includes STATE-4(a) |
 | NEW-STATE-PERSIST-2 | Do (B2) | trivial; pure-read list_all |
 | MCP-1 | Done | token-derived identity |
 | MCP-2 | Do (B3) | collapse proxy; live-codex confirm folded into B3 |
@@ -457,7 +457,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) — **fixed (B0)** | Server |
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly | Server |
 | NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel | Server |
-| NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place | State |
+| NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place — **fixed (B2)** | State |
 | NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk | State |
 | NEW-MCP-1 | P2 | `chat_send` god-function: duplicated image-upload + duplicated @mention loop | MCP |
 | NEW-MCP-2 | P3 | MCP read contract serialized in 3 divergent inline shapes | MCP |

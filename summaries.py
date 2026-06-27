@@ -5,6 +5,7 @@ import time
 import threading
 import uuid
 from pathlib import Path
+import atomic_io
 
 MAX_CHARS = 1000
 
@@ -28,10 +29,7 @@ class SummaryStore:
             self._summaries = {}
 
     def _save(self):
-        self._path.write_text(
-            json.dumps(self._summaries, indent=2, ensure_ascii=False) + "\n",
-            "utf-8",
-        )
+        atomic_io.write_json_atomic(self._path, self._summaries)
 
     def get(self, channel: str) -> dict | None:
         with self._lock:

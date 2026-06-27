@@ -59,8 +59,52 @@ class AtomicWriteTests(unittest.TestCase):
         self.assertFalse((self.dir / "data.json.tmp").exists())
 
 
+class AtomicJsonlWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.path = self.dir / "log.jsonl"
+
+    def test_writes_one_json_object_per_line(self):
+        rows = [{"id": 1, "t": "café"}, {"id": 2, "t": "x"}]
+        atomic_io.write_jsonl_atomic(self.path, rows)
+        lines = self.path.read_text("utf-8").splitlines()
+        self.assertEqual([json.loads(ln) for ln in lines], rows)
+        self.assertFalse((self.dir / "log.jsonl.tmp").exists())
+
+    def test_replace_failure_preserves_original_and_cleans_tmp(self):
+        atomic_io.write_jsonl_atomic(self.path, [{"v": 1}])
+        original = self.path.read_text("utf-8")
+        real_replace = os.replace
+
+        def boom(src, dst):
+            raise OSError("simulated replace failure")
+
+        os.replace = boom
+        try:
+            with self.assertRaises(OSError):
+                atomic_io.write_jsonl_atomic(self.path, [{"v": 2}])
+        finally:
+            os.replace = real_replace
+        self.assertEqual(self.path.read_text("utf-8"), original)
+        self.assertFalse((self.dir / "log.jsonl.tmp").exists())
+
+
 class StoreSiteSmokeTests(unittest.TestCase):
     """The converted stores still persist valid JSON with no .tmp leftover."""
+
+    def test_message_store_rewrite_is_atomic(self):
+        from store import MessageStore
+
+        d = Path(tempfile.mkdtemp())
+        s = MessageStore(str(d / "messages.jsonl"))
+        s.add("user", "hello")
+        s.add("user", "world")
+        s._rewrite()  # the bulk-edit rewrite path (NEW-STATE-PERSIST-1)
+        lines = (d / "messages.jsonl").read_text("utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        for ln in lines:
+            json.loads(ln)
+        self.assertFalse((d / "messages.jsonl.tmp").exists())
 
     def test_session_store_save_is_atomic(self):
         from session_store import SessionStore
