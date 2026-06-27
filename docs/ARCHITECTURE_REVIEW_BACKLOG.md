@@ -25,7 +25,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-SRV-5 | P3 | open | `/continue` handled in two places; WS path ignores the channel (app.py:847) |
 | STATE-1 | P1 | **done** | one `reachable()`/`reachable_names()` predicate (app.py) + presence ops encapsulated in `mcp_state` (sweep/last_seen/pop_renamed/clear_activity_offline/report_active); 0 private pokes in app.py/mcp_bridge; +MCP-3(b) |
 | STATE-3 | P2 | done | `0d61519` `_enrich` copies; view fields stay off the record |
-| STATE-4 | P2 | partial | `6d3e6d8` `atomic_io` helper exists, but O(n) per-message rewrite + registry rename-save untouched |
+| STATE-4 | P2 | **done** | (a) registry rename-save atomic (with NEW-STATE-PERSIST-1); (b) O(n) jobs rewrite accepted + documented in `jobs._save` (bounded work-threads) |
 | STATE-5 | P2 | partial | `6e72c2e` `naming.py` pure leaves only; view/auth/4× policy orchestration remain in registry |
 | STATE-6 | P3 | done | `037695e` `routing_paused` rename + single `_rewrite` |
 | STATE-7 | P3 | deferred | **DECISION: defer** (YAGNI — no second backend; reactivate on a scheduled backend change) |
@@ -76,7 +76,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-SRV-5 | Do | fix channel-arg now (correctness); collapse dup B4 |
 | STATE-1 | Done (B1) | one reachable() predicate; presence encapsulated in-place in mcp_state (see note) |
 | STATE-3 | Done | _enrich copies |
-| STATE-4 | Do (a) / Accept (b) | atomic rename-save yes; O(n) accepted+documented (bounded) |
+| STATE-4 | Done (a=do / b=accept) | rename-save atomic; O(n) accepted+documented in jobs._save |
 | STATE-5 | Do / Accept | NamingPolicy + view move; resolve_token & _inst_dict stay |
 | STATE-6 | Done | routing_paused rename; single _rewrite |
 | STATE-7 | Defer | speculative abstraction; reactivate on a real backend change |
@@ -258,7 +258,7 @@ Confirmed open and never started. `grep -cE 'mcp_state\._' app.py` = **24** (ver
 
 Confirmed done. `session_engine.py:455 enriched = dict(session)` is the first statement of `_enrich`; `total_phases`/`phase_name`/`current_role`/`current_agent` are written only onto `enriched` (459-469). Proof: `grep -nE 'total_phases|phase_name|current_role|current_agent' session_store.py` → 0; `test_session_engine` green.
 
-#### STATE-4 — atomic-JSON helper only partially adopted; O(n) per-message rewrite untouched (P2, partial)
+#### STATE-4 — atomic-JSON helper adoption + O(n) per-message rewrite (P2, done)
 **Decision (定案):** **Split decision. Do (a):** route `registry._save_renames` through the atomic helper (Batch 2, shares NEW-STATE-PERSIST-1's fix). **Accept (b):** the O(n) per-append jobs rewrite — jobs are bounded, and splitting to a per-job append-log mid-refactor introduces a divergent storage model for marginal gain. Record the message-count bound + rationale and close (b).
 
 `write_json_atomic` (atomic_io.py:15-42) is adopted by `session_store.py:62`, `jobs.py:37`, `settings_store.py:80/259`. But `registry._save_renames` (registry.py:80-90) still hand-rolls `tmp.write_text` + `tmp.replace` **without fsync**, bypassing the helper. The O(n) half is fully untouched: `jobs._save` (36-37) writes the **entire** jobs blob (all jobs + all nested messages) and `add_message` fires it on every append (243), as do resolve/delete/update — each message append re-serializes every other job's messages.

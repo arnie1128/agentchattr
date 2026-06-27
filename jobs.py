@@ -34,6 +34,13 @@ class JobStore:
             self._jobs = []
 
     def _save(self):
+        # Atomic (NEW-STATE-PERSIST-1). The O(n) full-blob rewrite per mutation
+        # (every add_message re-serializes all jobs and their messages) is
+        # accepted, not split (STATE-4b): jobs are bounded work-threads — a small,
+        # capped set with short message lists — so the rewrite cost is negligible.
+        # A per-job append-log (like MessageStore) would add a divergent storage
+        # model for no measurable gain; revisit only if job message volume ever
+        # becomes unbounded.
         write_json_atomic(self._path, self._jobs)
 
     def _next_sort_order_locked(self, status: str) -> int:
