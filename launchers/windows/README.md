@@ -2,7 +2,7 @@
 
 Per-agent `.bat` wrappers that start the agentchattr server (if not already running) and launch an agent CLI under `python wrapper.py`. Companion shell scripts live in `../macos-linux/`.
 
-When invoked through a project wrapper (`project-template/start_<agent>.cmd`), the chain is:
+When invoked through a project wrapper (`instance-template/start_<agent>.cmd`), the chain is:
 
 ```
 PowerShell -> start_<agent>.cmd -> call launchers/windows/start_<agent>.bat

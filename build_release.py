@@ -35,7 +35,7 @@ INCLUDE_DIRS = [
     "assets",
     "launchers",
     "session-presets",
-    "project-template",
+    "instance-template",
 ]
 
 

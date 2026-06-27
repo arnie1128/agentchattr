@@ -81,7 +81,7 @@ def apply_cli_overrides(argv: list[str] | None = None) -> None:
 def resolve_path(raw, anchor: Path) -> str:
     """Resolve a path value: expand ~, anchor relative paths at `anchor`, normalize.
 
-    The same rule is duplicated (intentionally) in project-template/_load.py:
+    The same rule is duplicated (intentionally) in instance-template/_load.py:
     that helper runs from a user's project dir BEFORE agentchattr's install dir
     is located — it is what emits AGENTCHATTR_ROOT — so it cannot import this
     module. Keep the two implementations in sync.

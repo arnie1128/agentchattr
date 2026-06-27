@@ -33,10 +33,10 @@ session name. The main 8300 instance keeps running untouched.
 
 ```sh
 # macOS / Linux
-cp -R /path/to/agentchattr/project-template /path/to/your-project/.agentchattr
+cp -R /path/to/agentchattr/instance-template /path/to/your-project/.agentchattr
 
 # Windows (PowerShell)
-Copy-Item -Recurse /path/to/agentchattr/project-template /path/to/your-project/.agentchattr
+Copy-Item -Recurse /path/to/agentchattr/instance-template /path/to/your-project/.agentchattr
 ```
 
 Copy the **whole folder**, not just the visible files — `_load.py`,

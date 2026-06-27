@@ -477,7 +477,7 @@ Relative paths resolve against the shell's current directory (not agentchattr's 
 
 Server and wrappers share the same `AGENTCHATTR_*` env vars and the same flag names, so a launcher/profile can run multiple isolated instances by passing matching values to each process. If no flags or env vars are set, `config.toml` is used exactly as before — zero change for existing setups.
 
-**Project template** — for a turnkey setup, copy [`project-template/`](project-template/) into your project as `.agentchattr/` and edit its `config.toml`. The template ships platform-specific thin wrappers (`start.sh` / `start_<agent>.sh` on macOS/Linux, `start.cmd` / `start_<agent>.cmd` on Windows) that read `config.toml`, export the `AGENTCHATTR_*` env vars for you, and hand off to the main agentchattr launcher. See [`project-template/README.md`](project-template/README.md) for the full walkthrough.
+**Project template** — for a turnkey setup, copy [`instance-template/`](instance-template/) into your project as `.agentchattr/` and edit its `config.toml`. The template ships platform-specific thin wrappers (`start.sh` / `start_<agent>.sh` on macOS/Linux, `start.cmd` / `start_<agent>.cmd` on Windows) that read `config.toml`, export the `AGENTCHATTR_*` env vars for you, and hand off to the main agentchattr launcher. See [`instance-template/README.md`](instance-template/README.md) for the full walkthrough.
 
 ### API agents (local models)
 
