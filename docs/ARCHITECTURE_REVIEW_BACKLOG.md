@@ -9,7 +9,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | Item | P | State | Commit / note |
 |---|---|---|---|
 | SRV-1 | P1 | done | `e893bcf` single `_broadcast` fan-out (app.py:673/675) |
-| SRV-2 | P1 | **partial** | `09894e7` app_state singleton landed, but 2 dangling bare-global reads ship `NameError`s → NEW-SRV-1, NEW-SRV-2 |
+| SRV-2 | P1 | **done** | `09894e7` app_state singleton + the 3 dangling-read fixes (NEW-SRV-1/2/6) + first boot/connect smoke tests |
 | SRV-3 | P2 | done | `commands.py` macro dispatch + draft logic in session_engine |
 | SRV-4 | P2 | done | `472c082` public `store.resolve_decision` / `jobs.resolve_message` |
 | SRV-5 | P2 | partial | `bcb5e7e` `_resolve_targets`/`_finish_agent_rename`; 4 inline rename sites + 4 divergent trigger loops remain |
@@ -19,7 +19,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | BUG-1 / STATE-2 | P1 | done | `640b396` locked compare-and-advance + stale-snapshot reject (session_engine.py:287-294) |
 | NEW-SRV-1 | P1 | **done** | fix `state.session_token` (app.py:757) + `/ws`-connect smoke test (test_ws_connect.py) |
 | NEW-SRV-6 | P1 | **done** | (found in B0 exec) `agents.py` imported is_online/is_active/get_role from mcp_bridge (moved to mcp_state by MCP-3) → ImportError in every `broadcast_status`; repointed to mcp_state |
-| NEW-SRV-2 | P1 | **open** | `run.py:113-114` undefined `session_engine` → `NameError` in startup hook |
+| NEW-SRV-2 | P1 | **done** | run.py boot-resume reads `state.session_engine` via a testable `resume_sessions_on_boot()` + startup smoke test |
 | NEW-SRV-3 | P3 | open | `version_check` local `state` shadows the app_state singleton (latent) |
 | NEW-SRV-4 | P3 | open | `start_session` pokes `session_store._templates` directly (app.py:1914) |
 | NEW-SRV-5 | P3 | open | `/continue` handled in two places; WS path ignores the channel (app.py:847) |
@@ -60,7 +60,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | Item | Disposition | Rationale (clean-arch) |
 |---|---|---|
 | SRV-1 | Done | single _broadcast fan-out verified |
-| SRV-2 | Do now (B0) | close via the 2 NameError fixes + boot/connect smoke tests |
+| SRV-2 | Done (B0) | app_state singleton + 3 dangling-read fixes + boot/connect smoke tests |
 | SRV-3 | Done | commands.py + draft logic moved |
 | SRV-4 | Done | public resolve_decision / resolve_message |
 | SRV-5 | Do (B4) | unify 4 rename sites + 4 trigger loops; precondition for NEW-MCP-1 |
@@ -70,7 +70,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | BUG-1 / STATE-2 | Done | locked compare-and-advance |
 | NEW-SRV-1 | Done (B0) | fixed: state.session_token + /ws smoke test |
 | NEW-SRV-6 | Done (B0) | fixed: agents.py repointed to mcp_state (was ImportError in broadcast_status) |
-| NEW-SRV-2 | Do now (B0) | P1 startup-hook NameError regression |
+| NEW-SRV-2 | Done (B0) | fixed: run.py resume_sessions_on_boot() reads state.session_engine + smoke test |
 | NEW-SRV-3 | Do (B0) | trivial rename; latent footgun in the P1 file |
 | NEW-SRV-4 | Do (B4) | public transient-template method |
 | NEW-SRV-5 | Do | fix channel-arg now (correctness); collapse dup B4 |
@@ -450,7 +450,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | ID | P | Summary | Where |
 |---|---|---|---|
 | **NEW-SRV-1** | **P1** | `app.py:757` bare `session_token` → `NameError` on every `/ws` connect (live-UI regression) — **fixed (B0)** | §2 / Server |
-| **NEW-SRV-2** | **P1** | `run.py:113-114` undefined `session_engine` → `NameError` in the startup hook | §2 / Server |
+| **NEW-SRV-2** | **P1** | `run.py:113-114` undefined `session_engine` → `NameError` in the startup hook — **fixed (B0)** | §2 / Server |
 | **NEW-SRV-6** | **P1** | `agents.py` imported is_online/is_active/get_role from `mcp_bridge` after MCP-3 moved them to `mcp_state` → ImportError in every `broadcast_status` — **fixed (B0)** | Server / MCP |
 | NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) | Server |
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly | Server |

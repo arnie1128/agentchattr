@@ -13,6 +13,20 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
+# Shared runtime singletons (populated by app.configure()). Imported at module
+# scope so the boot-resume hook can reach the session engine without a global.
+from app_state import state  # noqa: E402
+
+
+def resume_sessions_on_boot():
+    """Resume sessions that were active before a restart.
+
+    Called from the FastAPI startup hook. Reads the session engine off the
+    shared `state` singleton; a no-op until app.configure() has wired it.
+    """
+    if state.session_engine:
+        state.session_engine.resume_active_sessions()
+
 
 def _parse_args():
     parser = argparse.ArgumentParser(
@@ -110,8 +124,7 @@ def main():
     async def on_startup():
         set_event_loop(asyncio.get_running_loop())
         # Resume any sessions that were active before restart
-        if session_engine:
-            session_engine.resume_active_sessions()
+        resume_sessions_on_boot()
 
     # Run web server
     import uvicorn
