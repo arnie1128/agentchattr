@@ -10,7 +10,7 @@ let autoScroll = true;
 let reconnectTimer = null;
 Store.set('username', 'user');  // single owner is Store (FE-3)
 Store.set('agentConfig', {});  // { name: { color, label } } — registered instances (used for pills); single owner is Store (FE-3)
-let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
+Store.set('baseColors', {});   // { name: { color, label } } — base agent colors (for message coloring); single owner is Store (FE-2)
 let todos = {};  // { msg_id: "todo" | "done" }
 Store.set('rules', []);  // array of rule objects from server — single owner is Store (FE-3)
 let activeMentions = new Set();  // agent names with pre-@ toggled on
@@ -659,7 +659,7 @@ function getSenderClass(sender) {
     if (resolveAgent(s)) return 'agent';
     // Check base colors for offline agents
     const base = s.replace(/-\d+$/, '');
-    if (base in baseColors) return 'agent';
+    if (base in Store.get('baseColors')) return 'agent';
     return 'user';
 }
 
@@ -687,7 +687,8 @@ function getColor(sender) {
     // Fall back to base agent colors (for historical messages from offline agents)
     const base = s.replace(/-\d+$/, '');
     if (co[base]) return co[base];
-    if (base in baseColors) return baseColors[base].color;
+    const bc = Store.get('baseColors');
+    if (base in bc) return bc[base].color;
     return 'var(--user-color)';
 }
 
@@ -1048,7 +1049,7 @@ function showAgentNameModal(opts) {
     avatarEl.style.background = opts.color;
 
     if (opts.mode === 'pending') {
-        const familyLabel = (baseColors[opts.base] || {}).label || opts.base || 'agent';
+        const familyLabel = (Store.get('baseColors')[opts.base] || {}).label || opts.base || 'agent';
         titleEl.textContent = 'Name this agent';
         subtitleEl.textContent = `A new ${familyLabel} instance connected`;
     } else {
@@ -4078,7 +4079,7 @@ Hub.on('agents', function (event) {
 });
 
 Hub.on('base_colors', function (event) {
-    baseColors = event.data || {};
+    Store.set('baseColors', event.data || {});
 });
 
 Hub.on('todos', function (event) {
