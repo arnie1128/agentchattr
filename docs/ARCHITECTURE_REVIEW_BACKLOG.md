@@ -37,7 +37,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-MCP-1 | P2 | **done (part a)** | `uploads.save_upload` + single `ALLOWED_UPLOAD_EXTS` (neutral module); `shutil.copy2` in mcp_bridge → 0. @mention-loop unify (part b) descoped — sync/async + would re-couple mcp_bridge→app |
 | NEW-MCP-2 | P3 | **done** | one `serialize_message(m, *, job_id=)`; channel + job variants byte-identical (key order preserved); `"sender": m["sender"]` → 1 |
 | WRAP-1 | P1 | done | `31c6e78` `server_client.py` single HTTP contract |
-| WRAP-2 | P1 | **partial** | `436c643` `mcp_inject.py` extracted (1 of 3); tmux helpers + prompt/poll split not done |
+| WRAP-2 | P1 | **done** | `436c643` mcp_inject; tmux helpers -> `wrapper_unix.build_tmux_session_name`; pure `build_trigger_prompt` split out of `_queue_watcher` (I/O stays); both unit-tested |
 | WRAP-3 | P2 | partial | `9cf1af6` argparse/proxy extracted; 4 monitor closures + thread-kwargs dup still inline |
 | WRAP-4 | P2 | done | `supervisor.run_loop` shared restart skeleton |
 | WRAP-5 | P2 | **partial** | `identity.py` (name/token) landed; heartbeat-409 re-register still duplicated |
@@ -88,7 +88,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-MCP-1 | Done (part a) / descope (part b) | uploads.save_upload dedup; trigger-loop unify descoped (sync/async + coupling) |
 | NEW-MCP-2 | Done (B3) | single serialize_message; golden-fixture key-order tests |
 | WRAP-1 | Done | ServerClient single HTTP contract |
-| WRAP-2 | Do (B4) | tmux helpers -> unix; pure build_trigger_prompt |
+| WRAP-2 | Done (B4) | tmux helpers -> wrapper_unix; pure build_trigger_prompt; +tests |
 | WRAP-3 | Do (B4) | lift monitor closures; with NEW-WRAP-1 |
 | WRAP-4 | Done | supervisor.run_loop shared |
 | WRAP-5 | Do (B4) | extract handle_heartbeat_409 |
@@ -353,7 +353,7 @@ Done half: `mcp_state.py` (213 lines) owns presence/activity/cursors/roles/last-
 
 Confirmed done. `ServerClient` (server_client.py:30) owns the wire contract; `_auth_headers` is defined once (server_client.py:23). Both wrappers consume it via `client.*`. Proof: `grep '_auth_headers' wrapper*.py` → 0; `grep 'urllib.request' wrapper.py wrapper_api.py` → only `call_model` (wrapper_api.py:202-203, the OpenAI-compatible model endpoint, correctly inline); `grep 'import wrapper' wrapper_api.py` → 0; `test_server_client` present.
 
-#### WRAP-2 — lift mcp_inject + move tmux helpers + split prompt/poll (P1, partial)
+#### WRAP-2 — lift mcp_inject + move tmux helpers + split prompt/poll (P1, done)
 **Decision (定案):** **Do (Batch 4).** Relocate the tmux helpers to wrapper_unix.py (their only consumer); extract a pure `build_trigger_prompt` out of `_queue_watcher` so prompt logic is testable without file I/O. Low risk.
 
 1 of 3 sub-tasks done. **Done:** `mcp_inject.py` extracted and consumed (wrapper.py:36-42). **Not done (a):** `_build_tmux_session_name` / `_safe_tmux_component` (defs wrapper.py:45/50, uses 67/68/520) remain in platform-agnostic wrapper.py and feed only the non-win32 branch — 0 hits in wrapper_unix.py. **Not done (b):** `_queue_watcher` (wrapper.py:108-206) interleaves queue-file polling (115-159) with prompt construction (161-202: role fetch, rules-epoch injection, identity hint).
