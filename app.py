@@ -411,16 +411,49 @@ def _resolve_targets(raw_targets: list[str]) -> list[str]:
     return list(dict.fromkeys(targets))  # dedupe, preserve order
 
 
-async def _finish_agent_rename(old_name: str, new_id: str):
+async def _trigger_targets(targets, *, channel, chat_msg, prompt=None, job_id=None,
+                           allowed_agent=None, notify_offline=False):
+    """Trigger each resolved target, applying the shared routing gates.
+
+    Used by the channel-message router (_handle_new_message) and the job-message
+    router (post_job_message). Always skips pending (unclaimed) instances. When
+    `allowed_agent` is set, suppresses out-of-turn triggers (session turn guard);
+    when `notify_offline`, posts a "queued" notice for offline targets. `prompt`
+    (pass-through, including "") and `job_id` are forwarded only when supplied so
+    each caller's trigger payload is preserved exactly. `trigger_agent_silent` is
+    deliberately NOT routed here — it is a minimal, gate-free trigger with its own
+    keep-[agent_name] resolution.
+    """
+    for target in targets:
+        if state.registry:
+            inst = state.registry.get_instance(target)
+            if inst and inst.get("state") == "pending":
+                continue
+        if allowed_agent and target != allowed_agent:
+            continue
+        if notify_offline and not mcp_state.is_online(target):
+            state.store.add("system", f"{target} appears offline — message queued.",
+                            msg_type="system", channel=channel)
+        if state.agents.is_available(target):
+            kwargs = {"message": chat_msg, "channel": channel}
+            if prompt is not None:
+                kwargs["prompt"] = prompt
+            if job_id is not None:
+                kwargs["job_id"] = job_id
+            await state.agents.trigger(target, **kwargs)
+
+
+async def _finish_agent_rename(old_name: str, new_id: str, *, broadcast: bool = True):
     """Common tail after a successful registry.rename: migrate runtime state,
-    rewrite historical senders, and notify clients."""
+    rewrite historical senders, and (optionally) notify clients."""
     mcp_state.migrate_identity(old_name, new_id)
     state.store.rename_sender(old_name, new_id)
-    await _broadcast(json.dumps({
-        "type": "agent_renamed",
-        "old_name": old_name,
-        "new_name": new_id,
-    }))
+    if broadcast:
+        await _broadcast(json.dumps({
+            "type": "agent_renamed",
+            "old_name": old_name,
+            "new_name": new_id,
+        }))
 
 
 async def _handle_new_message(msg: dict):
@@ -518,19 +551,10 @@ async def _handle_new_message(msg: dict):
     # Human @mentions are always allowed (the session engine handles pausing).
     allowed_agent = state.session_engine.get_allowed_agent(channel) if state.session_engine and sender_is_agent else None
 
-    for target in targets:
-        # Skip pending instances — they haven't been named/claimed yet
-        if state.registry:
-            inst = state.registry.get_instance(target)
-            if inst and inst.get("state") == "pending":
-                continue
-        # Session guard: suppress out-of-turn agent triggers
-        if allowed_agent and target != allowed_agent:
-            continue
-        if not mcp_state.is_online(target):
-            state.store.add("system", f"{target} appears offline — message queued.", msg_type="system", channel=channel)
-        if state.agents.is_available(target):
-            await state.agents.trigger(target, message=chat_msg, channel=channel, prompt=custom_prompt)
+    await _trigger_targets(
+        targets, channel=channel, chat_msg=chat_msg, prompt=custom_prompt,
+        allowed_agent=allowed_agent, notify_offline=True,
+    )
 
 
 # --- broadcasting ---
@@ -1385,14 +1409,7 @@ async def post_job_message(job_id: int, request: Request):
         targets = _resolve_targets(state.router.get_targets(sender, text, channel))
 
         chat_msg = f"{sender}: {text}" if text else ""
-        for target in targets:
-            if state.registry:
-                inst = state.registry.get_instance(target)
-                if inst and inst.get("state") == "pending":
-                    continue
-            if state.agents.is_available(target):
-                await state.agents.trigger(target, message=chat_msg, channel=channel,
-                                     job_id=job_id)
+        await _trigger_targets(targets, channel=channel, chat_msg=chat_msg, job_id=job_id)
 
     return msg
 
@@ -1523,15 +1540,7 @@ async def register_agent(request: Request):
     # If slot 1 was renamed (e.g. "claude" → "claude-1"), migrate state
     renamed = result.pop("_renamed_slot1", None)
     if renamed:
-        mcp_state.migrate_identity(renamed["old"], renamed["new"])
-        state.store.rename_sender(renamed["old"], renamed["new"])
-        if _event_loop:
-            rename_event = json.dumps({
-                "type": "agent_renamed",
-                "old_name": renamed["old"],
-                "new_name": renamed["new"],
-            })
-            asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
+        await _finish_agent_rename(renamed["old"], renamed["new"])
     # Broadcast pending_instance event so UI can show naming lightbox
     if result.get("state") == "pending" and _event_loop:
         pending_event = json.dumps({
@@ -1566,15 +1575,7 @@ async def deregister_agent(name: str, request: Request):
     # If the remaining instance was renamed back (e.g. "claude-1" → "claude"), migrate state
     renamed = result.pop("_renamed_back", None)
     if renamed:
-        mcp_state.migrate_identity(renamed["old"], renamed["new"])
-        state.store.rename_sender(renamed["old"], renamed["new"])
-        if _event_loop:
-            rename_event = json.dumps({
-                "type": "agent_renamed",
-                "old_name": renamed["old"],
-                "new_name": renamed["new"],
-            })
-            asyncio.run_coroutine_threadsafe(_broadcast(rename_event), _event_loop)
+        await _finish_agent_rename(renamed["old"], renamed["new"])
     return JSONResponse({"ok": True})
 
 
@@ -1607,9 +1608,10 @@ async def rename_agent_label(name: str, request: Request):
             return JSONResponse({"ok": True, "warning": result})
         return JSONResponse({"error": result}, status_code=400)
 
-    mcp_state.migrate_identity(name, new_id)
-    # Update sender on all historical messages
-    state.store.rename_sender(name, new_id)
+    # No broadcast here: the human-UI rename path historically did not emit an
+    # agent_renamed event (the caller reconciles via the REST response). Preserved
+    # via broadcast=False — see SRV-5 note about this asymmetry.
+    await _finish_agent_rename(name, new_id, broadcast=False)
     return JSONResponse({"ok": True, "new_name": new_id})
 
 

@@ -12,7 +12,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | SRV-2 | P1 | **done** | `09894e7` app_state singleton + the 3 dangling-read fixes (NEW-SRV-1/2/6) + first boot/connect smoke tests |
 | SRV-3 | P2 | done | `commands.py` macro dispatch + draft logic in session_engine |
 | SRV-4 | P2 | done | `472c082` public `store.resolve_decision` / `jobs.resolve_message` |
-| SRV-5 | P2 | partial | `bcb5e7e` `_resolve_targets`/`_finish_agent_rename`; 4 inline rename sites + 4 divergent trigger loops remain |
+| SRV-5 | P2 | **done** | `_finish_agent_rename(broadcast=)` unifies 3 rename sites (migrate_identity once); `_trigger_targets` unifies the 2 fully-gated trigger loops; `trigger_agent_silent` kept inline (minimal, distinct resolution) |
 | SRV-6 | P2 | done | `settings_store.py` `SettingsStore`+`HatStore` (lock + validated `update`) |
 | SRV-7 | P3 | **done** | `presence_monitor.py` + `schedule_runner.py` extracted (tick+run, explicit deps); reaper orchestration now unit-tested; FS-migration flag descoped (idempotent no-op) |
 | SRV-8 | P3 | open | version-check + `_auto_cast` still inline (hats sub-item already done by SRV-6) |
@@ -63,7 +63,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | SRV-2 | Done (B0) | app_state singleton + 3 dangling-read fixes + boot/connect smoke tests |
 | SRV-3 | Done | commands.py + draft logic moved |
 | SRV-4 | Done | public resolve_decision / resolve_message |
-| SRV-5 | Do (B4) | unify 4 rename sites + 4 trigger loops; precondition for NEW-MCP-1 |
+| SRV-5 | Done (B3) | rename helper + _trigger_targets; silent loop kept (semantically distinct) |
 | SRV-6 | Done | settings_store/hats lock-guarded |
 | SRV-7 | Done (B1) | presence_monitor + schedule_runner extracted + orchestration tested |
 | SRV-8 | Do (B4) | low-risk leaf extraction |
@@ -184,13 +184,14 @@ Confirmed done. `commands.py` owns macro dispatch (`BROADCAST_COMMANDS`, `is_mac
 
 Confirmed done. Handlers are thin; atomicity lives in the store classes. Proof: `grep -nE '\.store\._lock|\.store\._messages|\.store\._rewrite|\.jobs\._save' app.py` → 0. The single residual store-private access (`session_store._templates` @1914) is a different store, scoped out to NEW-SRV-4.
 
-#### SRV-5 — routing/rename helpers partial; divergent inline sites remain (P2, partial)
+#### SRV-5 — routing/rename helpers partial; divergent inline sites remain (P2, done)
 **Decision (定案):** **Do (Batch 4).** Genuine DRY/SRP win: one sync rename-finish helper (emitting via run_coroutine_threadsafe) collapses the 4 sync sites; one resolve+trigger helper unifies the 4 divergent loops incl. trigger_agent_silent. Precondition for NEW-MCP-1.
 
 `_finish_agent_rename` (app.py:546-555, async) is used at 2 WS sites, but the same `migrate_identity` sequence is still inlined at 4 sync sites — reaper 292, `register_agent` 1659, `deregister_agent` 1702, `rename_agent_label` REST 1743. `_resolve_targets` (531-543) is used at 630 and 1517, but the trigger loops diverge: `_handle_new_message` @665, `trigger_agent_silent` bypasses `_resolve_targets` and calls `registry.resolve_to_instances` directly @1419 (no pending-skip), `post_job_message` @1526, `resolve_job_message` @1556. The sync sites can't call the async rename helper directly (`run_coroutine_threadsafe`), which is why they stayed inline.
 - **Approach (方案):** add a sync rename-finish helper (or a registry-side `rename_and_migrate` emitting via `run_coroutine_threadsafe`) so the 4 sync sites collapse onto one path; extract one trigger-targets helper taking `(sender, text, channel[, job_id])` applying pending-skip + session-guard uniformly, repointing all 4 loops including `trigger_agent_silent`.
 - **Fix scope (修正範圍):** `app.py` — 1 sync rename helper repointing 4 sites (292/1659/1702/1743) + 1 trigger-targets helper repointing 4 loops (665, 1419/1424, 1517/1526, 1556). ~8 sites, ~60-90 lines net reduction. `registry.py` optional.
 - **Completion criteria (達成條件):** `grep -n 'migrate_identity(' app.py` appears only inside the rename helper(s) (≤2 hits, not the current 5); `trigger_agent_silent` uses `_resolve_targets` (no standalone `resolve_to_instances` loop at 1419); all 4 trigger loops share one helper body.
+- **Done — execution note (clean-arch deviations):** `migrate_identity` now appears exactly once in app.py (inside `_finish_agent_rename`, which grew a `broadcast=` flag); the 3 async rename sites call it — the human-UI REST rename uses `broadcast=False` to preserve its pre-existing no-`agent_renamed`-event behaviour (a likely latent UI-sync gap, surfaced but NOT changed under a behaviour-preserving refactor). On triggers: the audit said "4 loops" but only **3** exist post-STATE-1; the 2 fully-gated loops (`_handle_new_message`, `post_job_message`) are unified into `_trigger_targets` (sentinel `prompt`/`job_id` forwarding keeps each payload byte-identical). `trigger_agent_silent` is **kept inline by decision**: it is a minimal gate-free trigger AND resolves targets differently (keeps `[agent_name]` when `resolve_to_instances` is empty, which `_resolve_targets` would drop) — routing it through the shared helper would change behaviour. +`test_trigger_targets` (5).
 
 #### SRV-6 — `room_settings` / `agent_hats` folded into lock-guarded stores (P2, done)
 **Decision (定案):** Done — closed.
