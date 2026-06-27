@@ -209,8 +209,60 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def _parse_wrapper_args(agent_names: list[str]):
+    """Build the wrapper CLI parser and return (args, unrecognized_extra).
+
+    The per-project isolation flags are consumed earlier by
+    config_loader.apply_cli_overrides(); they are declared here only so
+    --help lists them and argparse doesn't reject them.
+    """
     import argparse
+
+    parser = argparse.ArgumentParser(description="Agent wrapper with chat auto-trigger")
+    parser.add_argument("agent", choices=agent_names, help=f"Agent to wrap ({', '.join(agent_names)})")
+    parser.add_argument("--no-restart", action="store_true", help="Do not restart on exit")
+    parser.add_argument("--label", type=str, default=None, help="Custom display label")
+    parser.add_argument("--data-dir",      default=None, help="Override server.data_dir (path)")
+    parser.add_argument("--port",          default=None, help="Override server.port (int)")
+    parser.add_argument("--mcp-http-port", default=None, help="Override mcp.http_port (int)")
+    parser.add_argument("--mcp-sse-port",  default=None, help="Override mcp.sse_port (int)")
+    parser.add_argument("--upload-dir",    default=None, help="Override images.upload_dir (path)")
+    parser.add_argument(
+        "--agent-cwd", default=None,
+        help="Override agent working directory (overrides config.cwd). "
+             "Accepts absolute, ~user, or shell-CWD-relative paths.",
+    )
+    return parser.parse_known_args()
+
+
+def _start_identity_proxy(inject_cfg: dict, mcp_cfg: dict, agent_name: str, token: str):
+    """Start the local MCP identity proxy for proxy-based agents.
+
+    Returns (proxy, proxy_url). Exits the process if the proxy fails to start.
+    """
+    from mcp_proxy import McpIdentityProxy
+
+    transport = inject_cfg.get("mcp_transport", "http")
+    if transport == "sse":
+        upstream_base = f"http://127.0.0.1:{mcp_cfg.get('sse_port', 8201)}"
+        proxy_path = "/sse"
+    else:
+        upstream_base = f"http://127.0.0.1:{mcp_cfg.get('http_port', 8200)}"
+        proxy_path = "/mcp"
+
+    proxy = McpIdentityProxy(
+        upstream_base=upstream_base,
+        upstream_path=proxy_path,
+        agent_name=agent_name,
+        instance_token=token,
+    )
+    if proxy.start() is False:
+        print("  Failed to start MCP proxy.")
+        sys.exit(1)
+    return proxy, f"{proxy.url}{proxy_path}"
+
+
+def main():
     import urllib.error
 
     from config_loader import apply_cli_overrides, load_config
@@ -222,25 +274,7 @@ def main():
     config = load_config(ROOT)
 
     agent_names = list(config.get("agents", {}).keys())
-
-    parser = argparse.ArgumentParser(description="Agent wrapper with chat auto-trigger")
-    parser.add_argument("agent", choices=agent_names, help=f"Agent to wrap ({', '.join(agent_names)})")
-    parser.add_argument("--no-restart", action="store_true", help="Do not restart on exit")
-    parser.add_argument("--label", type=str, default=None, help="Custom display label")
-    # Per-project isolation flags (must match the server's flags so wrappers
-    # launched separately connect to the right instance). Values are consumed
-    # by apply_cli_overrides() above; listing here so --help shows them.
-    parser.add_argument("--data-dir",      default=None, help="Override server.data_dir (path)")
-    parser.add_argument("--port",          default=None, help="Override server.port (int)")
-    parser.add_argument("--mcp-http-port", default=None, help="Override mcp.http_port (int)")
-    parser.add_argument("--mcp-sse-port",  default=None, help="Override mcp.sse_port (int)")
-    parser.add_argument("--upload-dir",    default=None, help="Override images.upload_dir (path)")
-    parser.add_argument(
-        "--agent-cwd", default=None,
-        help="Override agent working directory (overrides config.cwd). "
-             "Accepts absolute, ~user, or shell-CWD-relative paths.",
-    )
-    args, extra = parser.parse_known_args()
+    args, extra = _parse_wrapper_args(agent_names)
 
     agent = args.agent
     agent_cfg = config.get("agents", {}).get(agent, {})
@@ -285,26 +319,8 @@ def main():
     needs_proxy = inject_mode in ("proxy_flag", "") or not inject_mode
 
     if needs_proxy:
-        from mcp_proxy import McpIdentityProxy
-
-        transport = inject_cfg.get("mcp_transport", "http")
-        if transport == "sse":
-            upstream_base = f"http://127.0.0.1:{mcp_cfg.get('sse_port', 8201)}"
-            proxy_path = "/sse"
-        else:
-            upstream_base = f"http://127.0.0.1:{mcp_cfg.get('http_port', 8200)}"
-            proxy_path = "/mcp"
-
-        proxy = McpIdentityProxy(
-            upstream_base=upstream_base,
-            upstream_path=proxy_path,
-            agent_name=assigned_name,
-            instance_token=assigned_token,
-        )
-        if proxy.start() is False:
-            print("  Failed to start MCP proxy.")
-            sys.exit(1)
-        proxy_url = f"{proxy.url}{proxy_path}"
+        proxy, proxy_url = _start_identity_proxy(
+            inject_cfg, mcp_cfg, assigned_name, assigned_token)
 
     _identity_lock = threading.Lock()
     _identity = {
