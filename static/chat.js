@@ -21,7 +21,7 @@ let lastMessageDates = {};  // { channel: dateString } for per-channel dividers
 let soundEnabled = false;  // suppress sounds during initial history load
 // activeChannel: single owner is Store (FE-3). Seed it from localStorage.
 Store.set('activeChannel', localStorage.getItem('agentchattr-channel') || 'general');
-let channelList = ['general'];
+Store.set('channelList', ['general']);  // single owner is Store (FE-3)
 Store.set('channelUnread', {});  // { channelName: count } — single owner is Store (FE-3)
 let agentHats = {};  // { agent_name: svg_string }
 window.customRoles = [];  // saved custom roles from settings
@@ -32,7 +32,7 @@ let schedulesList = [];  // array of schedule objects from server
 // Using defineProperty so live values are always returned.
 Object.defineProperty(window, 'SESSION_TOKEN', { get() { return SESSION_TOKEN; } });
 Object.defineProperty(window, 'activeChannel', { get() { return Store.get('activeChannel'); } });
-Object.defineProperty(window, 'channelList', { get() { return channelList; }, set(v) { channelList = v; } });
+Object.defineProperty(window, 'channelList', { get() { return Store.get('channelList'); }, set(v) { Store.set('channelList', v); } });
 Object.defineProperty(window, 'channelUnread', { get() { return Store.get('channelUnread'); }, set(v) { Store.set('channelUnread', v); } });
 window._setActiveChannel = function(v) { Store.set('activeChannel', v); };
 // Persist activeChannel changes in one place — Store is the single owner.
@@ -1592,15 +1592,15 @@ function applySettings(data) {
         window.customRoles = data.custom_roles;
     }
     if (data.channels && Array.isArray(data.channels)) {
-        channelList = data.channels;
+        Store.set('channelList', data.channels);
         // If active channel was deleted, switch to general
-        if (!channelList.includes(activeChannel)) {
+        if (!Store.get('channelList').includes(activeChannel)) {
             Store.set('activeChannel', 'general');
             filterMessagesByChannel();
         }
         renderChannelTabs();
 
-        if (pendingChannelSwitch && channelList.includes(pendingChannelSwitch)) {
+        if (pendingChannelSwitch && Store.get('channelList').includes(pendingChannelSwitch)) {
             const name = pendingChannelSwitch;
             pendingChannelSwitch = null;
             switchChannel(name);
