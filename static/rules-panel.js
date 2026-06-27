@@ -94,14 +94,14 @@ let _seenRuleIds = new Set();
 // ---------------------------------------------------------------------------
 
 function handleRuleEvent(action, rule) {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     if (action === 'propose') {
         rules.push(rule);
     } else if (['activate', 'deactivate', 'edit', 'approve'].includes(action)) {
         const idx = rules.findIndex(r => r.id === rule.id);
         if (idx >= 0) rules[idx] = rule;
     } else if (action === 'delete') {
-        window.rules = rules.filter(r => r.id !== rule.id);
+        Store.set('rules', rules.filter(r => r.id !== rule.id));
         _seenRuleIds.delete(rule.id);
     }
     renderRulesPanel();
@@ -115,7 +115,7 @@ function toggleRulesPanel() {
         document.getElementById('rules-toggle').classList.toggle('active', !panel.classList.contains('hidden'));
         if (!panel.classList.contains('hidden')) {
             // Mark all current drafts as seen
-            for (const r of window.rules) {
+            for (const r of Store.get('rules')) {
                 if (r.status === 'proposed' || r.status === 'draft') _seenRuleIds.add(r.id);
             }
             updateRulesBadge();
@@ -147,7 +147,7 @@ function remindAgents() {
 // ---------------------------------------------------------------------------
 
 function renderRulesPanel() {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     const list = document.getElementById('rules-list');
     if (!list) return;
 
@@ -349,7 +349,7 @@ function renderRulesPanel() {
 // ---------------------------------------------------------------------------
 
 function updateRulesBadge() {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     const badge = document.getElementById('rules-badge');
     if (!badge) return;
     // Only count unseen proposals — not all drafts
@@ -406,14 +406,14 @@ function submitCreateRule(btn) {
 
     wsClient.send('rule_propose', {
         text: text,
-        author: window.username,
+        author: Store.get('username'),
         channel: window.activeChannel,
     });
     form.remove();
 }
 
 function toggleRuleStatus(id) {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     const d = rules.find(r => r.id === id);
     if (!d) return;
 
@@ -425,7 +425,7 @@ function toggleRuleStatus(id) {
 }
 
 function editRule(id) {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     const d = rules.find(r => r.id === id);
     if (!d) return;
 
@@ -506,13 +506,13 @@ function startDeleteRule(id) {
 }
 
 function deleteRule(id) {
-    const rules = window.rules;
+    const rules = Store.get('rules');
     const d = rules.find(r => r.id === id);
     wsClient.send('rule_delete', { id });
 
     // Prefill a rejection message to the proposer
     const author = d?.author || d?.owner;
-    if (d && author && author.toLowerCase() !== window.username.toLowerCase()) {
+    if (d && author && author.toLowerCase() !== Store.get('username').toLowerCase()) {
         const input = document.getElementById('input');
         const reasonBit = d.reason ? ` (reason: ${d.reason})` : '';
         input.value = `@${author} Rule rejected: "${d.text || d.decision || ''}"${reasonBit} — `;
