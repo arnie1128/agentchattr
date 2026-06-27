@@ -44,12 +44,12 @@ Each structural item was committed individually (green tree + per-item five-dime
 | WRAP-6 | P3 | **done (accept)** | `1121894` `resolve_path`; documented `_load.py` dup kept (bootstrap-ordering constraint), now protected by a drift-guard equivalence test |
 | NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
-| FE-2 | P2 | partial | `47a9895` only `escapeHtml` extracted; 5 helpers still in chat.js (blocked on FE-3) |
-| FE-3 | P2 | partial | `9214916` `activeChannel` single-owner; ~7 cross-module bridged globals remain |
+| FE-2 | P2 | partial -> real-machine phase | `47a9895` `escapeHtml` extracted; the rest depends on FE-3 -> follows FE-3 into the real-machine phase (#78) |
+| FE-3 | P2 | partial -> real-machine phase | `9214916` `activeChannel` single-owner. The remaining 7-key Store migration (~100 cross-module edits over chat.js + 4 siblings) is **re-sequenced to the real-machine phase (#78)** — no JS test net, blind syntax-only edits would risk silent UI breakage |
 | FE-4 | P3 | done | inbound `onmessage` → `Hub.emit` only (chat.js:379-384) |
 | FE-5 | P3 | done | `appendMessage` → `_messageRenderers` registry |
-| FE-6 | P1 | open | **DECISION: do**, sequenced last after FE-3 (real defect, not owner-gated) |
-| NEW-FE-chatjs-split | P3 | open | chat.js 4254 lines / 132 fns; Tier-A leaves extractable now, Tier-B blocked on FE-3 |
+| FE-6 | P1 | -> real-machine phase | **DECISION: do**, after FE-3, in the real-machine phase (#78) — message-model rewrite needs runtime verification |
+| NEW-FE-chatjs-split | P3 | -> real-machine phase | Tier-A 'leaves' (sounds.js) in fact couple to `soundEnabled` (FE-3) and are chat.js-called; do with FE-3 in the real-machine phase (#78) |
 
 **Tests:** 16 `unittest` modules. `python -m unittest discover -s tests` runs **145 tests green** here; `test_app_state` and `test_archive_feature` need `fastapi` and error on import when it is absent (optional-dependency gap, not a regression). **No test covers `/ws`-connect or app boot** — that gap is exactly why the two SRV-2 `NameError`s shipped uncaught; both fixes must add a smoke test. The three large mechanical refactors (SRV-2, MCP-3, FE-3) used a `tokenize`-based renamer to avoid corrupting strings/comments.
 
@@ -95,12 +95,12 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | WRAP-6 | Done (accept) | drift-guard test added; shared-leaf declined (bootstrap constraint) |
 | NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
-| FE-2 | Do (after FE-3) | leaf move once state is in Store |
-| FE-3 | Do (B4) | keystone; unblocks FE-2 / FE-6 / chatjs Tier-B |
+| FE-2 | Do (real-machine #78) | follows FE-3 |
+| FE-3 | Do (real-machine #78) | keystone; ~100 cross-module edits, no JS test net -> verify on real machine |
 | FE-4 | Done | onmessage -> Hub.emit |
 | FE-5 | Done | _messageRenderers registry |
-| FE-6 | Do (after FE-3) | real defect; scheduled last, not deferred |
-| NEW-FE-chatjs-split | Do Tier-A (B4) | Tier-A leaves now; Tier-B after FE-3 |
+| FE-6 | Do (real-machine #78) | real defect; message model, runtime-verified |
+| NEW-FE-chatjs-split | Do (real-machine #78) | couples to FE-3; do together on real machine |
 
 ---
 ## How to read this
