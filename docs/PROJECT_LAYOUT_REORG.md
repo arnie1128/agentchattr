@@ -20,6 +20,19 @@ verification: 228 tests green, server boots (templates + config + 9 agents
 resolve), headless UI renders with zero static 404s, and a real codex agent
 registers + heartbeats through the refactored wrapper stack.
 
+**Post-review revisions (`2fcdfbe`):** on review feedback the package was
+renamed `agentchattr/` → **`src/`** (to drop the `agentchattr/agentchattr`
+path repetition — not a distributable package, so the repo==package convention
+buys nothing; only import prefixes change, the `agentchattr` product/SERVER_NAME
+strings are untouched) and `session_templates/` → **`session-presets/`** (so it
+no longer shares the word "template" with `project-template/`). Also: README
+architecture diagram corrected (the deleted MCP proxy → direct bearer MCP),
+README images moved to `.github/assets/`, and `.github/FUNDING.yml` removed
+(it pointed the Sponsor button at the upstream author on this fork). The
+`__file__` `parents[2]` depth is unchanged (`src/` keeps the modules 2 levels
+deep). Re-verified: 228 tests green, server boots + loads the 4 presets,
+headless UI renders clean.
+
 ## 0. Scope and non-goals
 
 In scope (the user's five questions):
