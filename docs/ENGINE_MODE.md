@@ -1,10 +1,21 @@
 # Engine mode — plan (finalized)
 
-Status: **Decided & accepted — executing.** Reframe agentchattr as an **engine**
-that runs chat-room **instances**. Every chat room — external projects *and this
-repo itself* — launches from its own `.agentchattr/` instance via one **stable
-public entry**, so the engine's internals can reorganize without breaking any
-existing instance. Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+Status: **DONE — all stages executed, verified, committed.** Reframe agentchattr
+as an **engine** that runs chat-room **instances**. Every chat room — external
+projects *and this repo itself* — launches from its own `.agentchattr/` instance
+via one **stable public entry**, so the engine's internals can reorganize without
+breaking any existing instance. Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+
+**Execution outcome (commits):** R1 `e548210` (instance-template) · R2 `3394fd6`
+(config/) · R3 `f738584` (bin/ + tools/) · R4 `34cb04f` (launch.cmd/sh) · R5
+`1864499` (self-instance) · R6 `db3b5ff` (README reframe). R7 re-synced
+`cocos_cs_349/.agentchattr/` (a separate, gitignored repo): its thin wrappers now
+call `launch.cmd`, its `config.toml` (root/port 8401/cwd) preserved, and it
+resolves to this engine — future-proof against engine-internal moves. Final
+verification: 228 tests green; `bin/run.py` boots (config/ + 9 agents + 4
+presets); a real codex agent registers + heartbeats through the repo's own
+`.agentchattr/` self-instance (cwd = repo root); `tools/build_release.py` builds
+a zip carrying the new layout (`bin/`, `src/`, `config/`, `launch.cmd`).
 
 ## 0. Model — engine vs instance
 
