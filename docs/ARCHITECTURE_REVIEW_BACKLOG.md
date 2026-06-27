@@ -38,11 +38,11 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-MCP-2 | P3 | **done** | one `serialize_message(m, *, job_id=)`; channel + job variants byte-identical (key order preserved); `"sender": m["sender"]` → 1 |
 | WRAP-1 | P1 | done | `31c6e78` `server_client.py` single HTTP contract |
 | WRAP-2 | P1 | **done** | `436c643` mcp_inject; tmux helpers -> `wrapper_unix.build_tmux_session_name`; pure `build_trigger_prompt` split out of `_queue_watcher` (I/O stays); both unit-tested |
-| WRAP-3 | P2 | partial | `9cf1af6` argparse/proxy extracted; 4 monitor closures + thread-kwargs dup still inline |
+| WRAP-3 | P2 | **done (right-sized)** | `9cf1af6` argparse/proxy; thread-kwargs dedup via `_watcher_kwargs()`; full monitor-closure lift to module scope descoped (heavy nonlocal-mutable coupling, untestable, marginal gain — re-affirms prior right-sizing) |
 | WRAP-4 | P2 | done | `supervisor.run_loop` shared restart skeleton |
 | WRAP-5 | P2 | **partial** | `identity.py` (name/token) landed; heartbeat-409 re-register still duplicated |
 | WRAP-6 | P3 | **partial** | `1121894` `resolve_path` within config_loader; `_load.py` dup remains, no guard test |
-| NEW-WRAP-1 | P3 | open | 3 forwarders re-instantiate `ServerClient` inside the watcher (wrapper.py:93-105) |
+| NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
 | FE-2 | P2 | partial | `47a9895` only `escapeHtml` extracted; 5 helpers still in chat.js (blocked on FE-3) |
 | FE-3 | P2 | partial | `9214916` `activeChannel` single-owner; ~7 cross-module bridged globals remain |
@@ -89,11 +89,11 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-MCP-2 | Done (B3) | single serialize_message; golden-fixture key-order tests |
 | WRAP-1 | Done | ServerClient single HTTP contract |
 | WRAP-2 | Done (B4) | tmux helpers -> wrapper_unix; pure build_trigger_prompt; +tests |
-| WRAP-3 | Do (B4) | lift monitor closures; with NEW-WRAP-1 |
+| WRAP-3 | Done (right-sized) | thread-kwargs deduped; closure-lift descoped (coupling/untestable) |
 | WRAP-4 | Done | supervisor.run_loop shared |
 | WRAP-5 | Do (B4) | extract handle_heartbeat_409 |
 | WRAP-6 | Accept | keep documented dup + drift test; decline shared-leaf (bootstrap constraint) |
-| NEW-WRAP-1 | Do (B4) | thread single ServerClient; with WRAP-3 |
+| NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
 | FE-2 | Do (after FE-3) | leaf move once state is in Store |
 | FE-3 | Do (B4) | keystone; unblocks FE-2 / FE-6 / chatjs Tier-B |
@@ -465,7 +465,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | NEW-STATE-PERSIST-2 | P3 | `JobStore.list_all` is a read that writes to disk — **fixed (B2)** | State |
 | NEW-MCP-1 | P2 | `chat_send` god-function: duplicated image-upload + duplicated @mention loop — **image dup fixed (B3); loop descoped** | MCP |
 | NEW-MCP-2 | P3 | MCP read contract serialized in 3 divergent inline shapes — **fixed (B3)** | MCP |
-| NEW-WRAP-1 | P3 | 3 forwarders re-instantiate `ServerClient` inside the watcher | Wrapper |
+| NEW-WRAP-1 | P3 | 3 forwarders re-instantiate `ServerClient` inside the watcher — **fixed (B4)** | Wrapper |
 | NEW-FE-chatjs-split | P3 | chat.js 4254 lines / 132 fns; Tier-A leaves extractable now, Tier-B blocked on FE-3 | Frontend |
 
 ---

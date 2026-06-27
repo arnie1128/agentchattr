@@ -61,21 +61,6 @@ _IDENTITY_HINT = (
 )
 
 
-def _fetch_role(server_port: int, agent_name: str) -> str:
-    """Fetch this agent's role from the server status endpoint."""
-    return ServerClient(server_port).fetch_role(agent_name)
-
-
-def _fetch_active_rules(server_port: int, token: str = "") -> dict | None:
-    """Fetch active rules from the server."""
-    return ServerClient(server_port).fetch_active_rules(token)
-
-
-def _report_rule_sync(server_port: int, agent_name: str, epoch: int, token: str = ""):
-    """Report that this agent has seen rules at the given epoch."""
-    ServerClient(server_port).report_rule_sync(agent_name, epoch, token)
-
-
 def build_trigger_prompt(*, channel, job_id=None, custom_prompt="", role="",
                          rules_text="", identity_hint="") -> str:
     """Assemble the agent wake prompt (pure — no I/O, WRAP-2).
@@ -100,7 +85,7 @@ def build_trigger_prompt(*, channel, job_id=None, custom_prompt="", role="",
 
 
 def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = False, trigger_flag=None,
-                   server_port: int = 8300, agent_name: str = "", get_token_fn=None,
+                   client=None, agent_name: str = "", get_token_fn=None,
                    refresh_interval: int = 10):
     """Poll queue file and inject an MCP read task when triggered."""
     first_mention = True
@@ -155,13 +140,13 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                     # Use current identity (may have changed via rename)
                     current_name, _ = get_identity_fn()
                     # Fetch role — check both current name and base name
-                    role = _fetch_role(server_port, current_name)
+                    role = client.fetch_role(current_name)
                     if not role and current_name != agent_name:
-                        role = _fetch_role(server_port, agent_name)
+                        role = client.fetch_role(agent_name)
 
                     # Smart rules injection: first trigger, epoch change, or periodic refresh
                     _token = get_token_fn() if get_token_fn else ""
-                    rules_data = _fetch_active_rules(server_port, _token)
+                    rules_data = client.fetch_active_rules(_token)
                     trigger_count += 1
                     rules_text = ""
                     if rules_data:
@@ -176,7 +161,7 @@ def _queue_watcher(get_identity_fn, inject_fn, *, is_multi_instance: bool = Fals
                             if rules_data["rules"]:
                                 rules_text = "; ".join(rules_data["rules"])
                             last_rules_epoch = rules_data["epoch"]
-                            _report_rule_sync(server_port, current_name, rules_data["epoch"], _token)
+                            client.report_rule_sync(current_name, rules_data["epoch"], _token)
 
                     identity_hint = ""
                     if first_mention and is_multi_instance:
@@ -431,15 +416,21 @@ def main():
     _trigger_flag = [False]  # shared: queue watcher sets True, activity checker reads
     _refresh_interval = 10  # default; overridden per-trigger by server settings
 
+    def _watcher_kwargs():
+        # Single source for the queue-watcher thread kwargs (NEW-WRAP-1: pass the
+        # shared client instead of server_port so the watcher stops re-creating
+        # one per trigger).
+        return {"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
+                "client": client, "agent_name": assigned_name,
+                "get_token_fn": get_token, "refresh_interval": _refresh_interval}
+
     def start_watcher(inject_fn):
         nonlocal _watcher_inject_fn, _watcher_thread
         _watcher_inject_fn = inject_fn
         _watcher_thread = threading.Thread(
             target=_queue_watcher,
             args=(get_identity, inject_fn),
-            kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
-                    "server_port": server_port, "agent_name": assigned_name,
-                    "get_token_fn": get_token, "refresh_interval": _refresh_interval},
+            kwargs=_watcher_kwargs(),
             daemon=True,
         )
         _watcher_thread.start()
@@ -452,9 +443,7 @@ def main():
                 _watcher_thread = threading.Thread(
                     target=_queue_watcher,
                     args=(get_identity, _watcher_inject_fn),
-                    kwargs={"is_multi_instance": _is_multi_instance, "trigger_flag": _trigger_flag,
-                            "server_port": server_port, "agent_name": assigned_name,
-                            "get_token_fn": get_token, "refresh_interval": _refresh_interval},
+                    kwargs=_watcher_kwargs(),
                     daemon=True,
                 )
                 _watcher_thread.start()
