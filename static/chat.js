@@ -19,7 +19,8 @@ let unreadCount = 0;    // messages received while scrolled up
 let lastMessageDate = null;  // track date for dividers (general channel)
 let lastMessageDates = {};  // { channel: dateString } for per-channel dividers
 let soundEnabled = false;  // suppress sounds during initial history load
-let activeChannel = localStorage.getItem('agentchattr-channel') || 'general';
+// activeChannel: single owner is Store (FE-3). Seed it from localStorage.
+Store.set('activeChannel', localStorage.getItem('agentchattr-channel') || 'general');
 let channelList = ['general'];
 let channelUnread = {};  // { channelName: count }
 let agentHats = {};  // { agent_name: svg_string }
@@ -30,10 +31,12 @@ let schedulesList = [];  // array of schedule objects from server
 // Expose globals that extracted modules (sessions.js, jobs.js) read via window.*
 // Using defineProperty so live values are always returned.
 Object.defineProperty(window, 'SESSION_TOKEN', { get() { return SESSION_TOKEN; } });
-Object.defineProperty(window, 'activeChannel', { get() { return activeChannel; } });
+Object.defineProperty(window, 'activeChannel', { get() { return Store.get('activeChannel'); } });
 Object.defineProperty(window, 'channelList', { get() { return channelList; }, set(v) { channelList = v; } });
 Object.defineProperty(window, 'channelUnread', { get() { return channelUnread; }, set(v) { channelUnread = v; } });
-window._setActiveChannel = function(v) { activeChannel = v; };
+window._setActiveChannel = function(v) { Store.set('activeChannel', v); };
+// Persist activeChannel changes in one place — Store is the single owner.
+Store.watch('activeChannel', function(v) { try { localStorage.setItem('agentchattr-channel', v); } catch (e) {} });
 window._setPendingChannelSwitch = function(v) { pendingChannelSwitch = v; };
 // scrollToBottom is set after function definition (see below)
 Object.defineProperty(window, 'username', { get() { return username; } });
@@ -528,8 +531,6 @@ function connectWebSocket() {
             }
             // Update active channel if we were on the renamed one
             if (activeChannel === event.old_name) {
-                activeChannel = event.new_name;
-                localStorage.setItem('agentchattr-channel', event.new_name);
                 Store.set('activeChannel', event.new_name);
             }
         } else if (event.type === 'edit') {
@@ -1778,8 +1779,6 @@ function applySettings(data) {
         channelList = data.channels;
         // If active channel was deleted, switch to general
         if (!channelList.includes(activeChannel)) {
-            activeChannel = 'general';
-            localStorage.setItem('agentchattr-channel', 'general');
             Store.set('activeChannel', 'general');
             filterMessagesByChannel();
         }

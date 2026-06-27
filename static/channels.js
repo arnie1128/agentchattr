@@ -206,8 +206,6 @@ function _showSidebarRenameDialog(oldName) {
             wsClient.send('channel_rename', { old_name: oldName, new_name: newName });
             if (window.activeChannel === oldName) {
                 window._setActiveChannel(newName);
-                localStorage.setItem('agentchattr-channel', newName);
-                Store.set('activeChannel', newName);
             }
         }
         cleanup();
@@ -297,10 +295,8 @@ function switchChannel(name) {
     if (topId) _channelScrollMsg[window.activeChannel] = topId;
     window._setActiveChannel(name);
     window.channelUnread[name] = 0;
-    localStorage.setItem('agentchattr-channel', name);
     filterMessagesByChannel();
     renderChannelTabs();
-    Store.set('activeChannel', name);
     // Restore: scroll to saved message, or bottom if none saved
     const savedId = _channelScrollMsg[name];
     if (savedId) {
@@ -433,8 +429,6 @@ function showChannelRenameDialog(oldName) {
             wsClient.send('channel_rename', { old_name: oldName, new_name: newName });
             if (window.activeChannel === oldName) {
                 window._setActiveChannel(newName);
-                localStorage.setItem('agentchattr-channel', newName);
-                Store.set('activeChannel', newName);
             }
         }
         cleanup();
