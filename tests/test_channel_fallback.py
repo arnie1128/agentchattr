@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import mcp_bridge
+import mcp_state
 
 
 class ChannelFallbackStateTests(unittest.TestCase):
@@ -27,50 +27,50 @@ class ChannelFallbackStateTests(unittest.TestCase):
     def setUp(self):
         # Snapshot and clear the channel/job maps before each test so
         # parallel tests don't leak into each other.
-        self._saved_ch = dict(mcp_bridge._last_read_channel)
-        self._saved_job = dict(mcp_bridge._last_read_job_id)
-        mcp_bridge._last_read_channel.clear()
-        mcp_bridge._last_read_job_id.clear()
+        self._saved_ch = dict(mcp_state._last_read_channel)
+        self._saved_job = dict(mcp_state._last_read_job_id)
+        mcp_state._last_read_channel.clear()
+        mcp_state._last_read_job_id.clear()
 
     def tearDown(self):
-        mcp_bridge._last_read_channel.clear()
-        mcp_bridge._last_read_channel.update(self._saved_ch)
-        mcp_bridge._last_read_job_id.clear()
-        mcp_bridge._last_read_job_id.update(self._saved_job)
+        mcp_state._last_read_channel.clear()
+        mcp_state._last_read_channel.update(self._saved_ch)
+        mcp_state._last_read_job_id.clear()
+        mcp_state._last_read_job_id.update(self._saved_job)
 
     def test_last_read_channel_state_exists(self):
         # Contract: module exposes the state maps chat_send reads from
-        self.assertIsInstance(mcp_bridge._last_read_channel, dict)
-        self.assertIsInstance(mcp_bridge._last_read_job_id, dict)
-        self.assertTrue(hasattr(mcp_bridge, "_last_read_lock"))
+        self.assertIsInstance(mcp_state._last_read_channel, dict)
+        self.assertIsInstance(mcp_state._last_read_job_id, dict)
+        self.assertTrue(hasattr(mcp_state, "_last_read_lock"))
 
     def test_recording_channel_clears_job_mapping(self):
         # Simulate an agent reading a job first, then a channel
-        mcp_bridge._last_read_job_id["agent"] = 42
+        mcp_state._last_read_job_id["agent"] = 42
         # Manually apply the same state transition chat_read does
         sender = "agent"
         ch = "bugfixing"
-        with mcp_bridge._last_read_lock:
-            mcp_bridge._last_read_channel[sender] = ch
-            mcp_bridge._last_read_job_id.pop(sender, None)
-        self.assertEqual(mcp_bridge._last_read_channel["agent"], "bugfixing")
-        self.assertNotIn("agent", mcp_bridge._last_read_job_id)
+        with mcp_state._last_read_lock:
+            mcp_state._last_read_channel[sender] = ch
+            mcp_state._last_read_job_id.pop(sender, None)
+        self.assertEqual(mcp_state._last_read_channel["agent"], "bugfixing")
+        self.assertNotIn("agent", mcp_state._last_read_job_id)
 
     def test_recording_job_clears_channel_mapping(self):
-        mcp_bridge._last_read_channel["agent"] = "bugfixing"
+        mcp_state._last_read_channel["agent"] = "bugfixing"
         sender = "agent"
         job_id = 42
-        with mcp_bridge._last_read_lock:
-            mcp_bridge._last_read_job_id[sender] = job_id
-            mcp_bridge._last_read_channel.pop(sender, None)
-        self.assertEqual(mcp_bridge._last_read_job_id["agent"], 42)
-        self.assertNotIn("agent", mcp_bridge._last_read_channel)
+        with mcp_state._last_read_lock:
+            mcp_state._last_read_job_id[sender] = job_id
+            mcp_state._last_read_channel.pop(sender, None)
+        self.assertEqual(mcp_state._last_read_job_id["agent"], 42)
+        self.assertNotIn("agent", mcp_state._last_read_channel)
 
     def test_different_agents_tracked_independently(self):
-        mcp_bridge._last_read_channel["alice"] = "bugfixing"
-        mcp_bridge._last_read_channel["bob"] = "portfolio"
-        self.assertEqual(mcp_bridge._last_read_channel["alice"], "bugfixing")
-        self.assertEqual(mcp_bridge._last_read_channel["bob"], "portfolio")
+        mcp_state._last_read_channel["alice"] = "bugfixing"
+        mcp_state._last_read_channel["bob"] = "portfolio"
+        self.assertEqual(mcp_state._last_read_channel["alice"], "bugfixing")
+        self.assertEqual(mcp_state._last_read_channel["bob"], "portfolio")
 
     def test_chat_send_fallback_prefers_job_over_channel(self):
         """If both job_id and channel are set (shouldn't happen in practice,
@@ -79,16 +79,16 @@ class ChannelFallbackStateTests(unittest.TestCase):
         # Simulate both being recorded, even though read_channel and
         # read_job_id paths mutually clear each other — this verifies the
         # chat_send resolution rule.
-        mcp_bridge._last_read_job_id[sender] = 99
-        mcp_bridge._last_read_channel[sender] = "bugfixing"
+        mcp_state._last_read_job_id[sender] = 99
+        mcp_state._last_read_channel[sender] = "bugfixing"
 
         # Replicate the precedence logic from chat_send:
         channel = ""
         job_id = 0
         if sender and not channel and not job_id:
-            with mcp_bridge._last_read_lock:
-                fallback_job = mcp_bridge._last_read_job_id.get(sender, 0)
-                fallback_channel = mcp_bridge._last_read_channel.get(sender, "")
+            with mcp_state._last_read_lock:
+                fallback_job = mcp_state._last_read_job_id.get(sender, 0)
+                fallback_channel = mcp_state._last_read_channel.get(sender, "")
             if fallback_job:
                 job_id = fallback_job
             elif fallback_channel:
@@ -98,15 +98,15 @@ class ChannelFallbackStateTests(unittest.TestCase):
 
     def test_chat_send_fallback_uses_channel_when_no_job(self):
         sender = "agent"
-        mcp_bridge._last_read_channel[sender] = "bugfixing"
+        mcp_state._last_read_channel[sender] = "bugfixing"
         # No job_id recorded
 
         channel = ""
         job_id = 0
         if sender and not channel and not job_id:
-            with mcp_bridge._last_read_lock:
-                fallback_job = mcp_bridge._last_read_job_id.get(sender, 0)
-                fallback_channel = mcp_bridge._last_read_channel.get(sender, "")
+            with mcp_state._last_read_lock:
+                fallback_job = mcp_state._last_read_job_id.get(sender, 0)
+                fallback_channel = mcp_state._last_read_channel.get(sender, "")
             if fallback_job:
                 job_id = fallback_job
             elif fallback_channel:
@@ -120,9 +120,9 @@ class ChannelFallbackStateTests(unittest.TestCase):
         job_id = 0
         # Apply full fallback logic including the 'general' final fallback
         if sender and not channel and not job_id:
-            with mcp_bridge._last_read_lock:
-                fallback_job = mcp_bridge._last_read_job_id.get(sender, 0)
-                fallback_channel = mcp_bridge._last_read_channel.get(sender, "")
+            with mcp_state._last_read_lock:
+                fallback_job = mcp_state._last_read_job_id.get(sender, 0)
+                fallback_channel = mcp_state._last_read_channel.get(sender, "")
             if fallback_job:
                 job_id = fallback_job
             elif fallback_channel:
@@ -133,7 +133,7 @@ class ChannelFallbackStateTests(unittest.TestCase):
 
     def test_explicit_channel_is_never_overridden(self):
         sender = "agent"
-        mcp_bridge._last_read_channel[sender] = "bugfixing"
+        mcp_state._last_read_channel[sender] = "bugfixing"
 
         # Caller explicitly passed channel="portfolio"
         channel = "portfolio"

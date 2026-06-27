@@ -25,6 +25,7 @@ from registry import RuntimeRegistry
 from session_store import SessionStore, validate_session_template
 from session_engine import SessionEngine
 
+import mcp_state
 from app_state import state
 
 log = logging.getLogger(__name__)
@@ -271,7 +272,7 @@ def configure(cfg: dict, session_token: str = ""):
         # the same predicate the send path uses — keeps @all from tagging a
         # claimed-but-offline agent that could never receive the message.
         online_checker=lambda: {
-            n for n in state.registry.get_active_names() if mcp_bridge.is_online(n)
+            n for n in state.registry.get_active_names() if mcp_state.is_online(n)
         } if state.registry else set(),
     )
     state.agents = AgentTrigger(state.registry, data_dir=data_dir)
@@ -306,7 +307,6 @@ def configure(cfg: dict, session_token: str = ""):
 
     def _background_checks():
         import time as _time
-        import mcp_bridge
 
         while True:
             _time.sleep(3)
@@ -332,35 +332,35 @@ def configure(cfg: dict, session_token: str = ""):
             # Short timeout (10s) prevents slot theft when MCP tool calls are intermittent.
             try:
                 now = _time.time()
-                with mcp_bridge._presence_lock:
+                with mcp_state._presence_lock:
                     currently_online = {
-                        name for name, ts in mcp_bridge._presence.items()
-                        if now - ts < mcp_bridge.PRESENCE_TIMEOUT
+                        name for name, ts in mcp_state._presence.items()
+                        if now - ts < mcp_state.PRESENCE_TIMEOUT
                     }
                     currently_active = set()
-                    for name, active in mcp_bridge._activity.items():
+                    for name, active in mcp_state._activity.items():
                         if active:
-                            if now - mcp_bridge._activity_ts.get(name, 0) < mcp_bridge.ACTIVITY_TIMEOUT:
+                            if now - mcp_state._activity_ts.get(name, 0) < mcp_state.ACTIVITY_TIMEOUT:
                                 currently_active.add(name)
                             else:
-                                mcp_bridge._activity[name] = False  # auto-expire
+                                mcp_state._activity[name] = False  # auto-expire
 
                 # Crash timeout: if a wrapper hasn't heartbeated for 60s,
                 # it's dead — deregister it to free the slot.
                 _CRASH_TIMEOUT = 15
                 registered = set(state.registry.get_all_names())
                 for name in registered:
-                    with mcp_bridge._presence_lock:
-                        last_seen = mcp_bridge._presence.get(name, 0)
+                    with mcp_state._presence_lock:
+                        last_seen = mcp_state._presence.get(name, 0)
                     if last_seen > 0 and now - last_seen > _CRASH_TIMEOUT:
                         log.info(f"Crash timeout: deregistering {name} (no heartbeat for {_CRASH_TIMEOUT}s)")
                         result = state.registry.deregister(name)
                         if result:
-                            mcp_bridge.purge_identity(name)
+                            mcp_state.purge_identity(name)
                             state.registry.clean_renames_for(name)
                             renamed = result.get("_renamed_back")
                             if renamed:
-                                mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+                                mcp_state.migrate_identity(renamed["old"], renamed["new"])
                                 state.store.rename_sender(renamed["old"], renamed["new"])
                                 if _event_loop:
                                     rename_event = json.dumps({
@@ -382,10 +382,10 @@ def configure(cfg: dict, session_token: str = ""):
                     if not inst:
                         continue
                     # Skip names that were just renamed (not actually offline)
-                    with mcp_bridge._presence_lock:
-                        was_renamed = name in mcp_bridge._renamed_from
+                    with mcp_state._presence_lock:
+                        was_renamed = name in mcp_state._renamed_from
                         if was_renamed:
-                            mcp_bridge._renamed_from.discard(name)
+                            mcp_state._renamed_from.discard(name)
                     if was_renamed:
                         continue
                     # Post leave message ONCE per offline transition (debounced)
@@ -400,10 +400,10 @@ def configure(cfg: dict, session_token: str = ""):
                 went_offline = (_known_online - currently_online) - timed_out
                 for name in went_offline:
                     # Skip leave messages for names that were just renamed
-                    with mcp_bridge._presence_lock:
-                        was_renamed = name in mcp_bridge._renamed_from
+                    with mcp_state._presence_lock:
+                        was_renamed = name in mcp_state._renamed_from
                         if was_renamed:
-                            mcp_bridge._renamed_from.discard(name)
+                            mcp_state._renamed_from.discard(name)
                     if was_renamed:
                         continue
                     if not state.registry.is_registered(name) and name not in _posted_leave:
@@ -414,11 +414,11 @@ def configure(cfg: dict, session_token: str = ""):
                     asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
 
                 # Clear stale activity for agents that went offline
-                with mcp_bridge._presence_lock:
-                    stale_active = [n for n in mcp_bridge._activity
-                                    if mcp_bridge._activity.get(n) and n not in currently_online]
+                with mcp_state._presence_lock:
+                    stale_active = [n for n in mcp_state._activity
+                                    if mcp_state._activity.get(n) and n not in currently_online]
                     for n in stale_active:
-                        mcp_bridge._activity[n] = False
+                        mcp_state._activity[n] = False
                     if stale_active:
                         currently_active -= set(stale_active)
 
@@ -812,7 +812,6 @@ async def _handle_new_message(msg: dict):
     sender_is_agent = sender in known_agents
     allowed_agent = state.session_engine.get_allowed_agent(channel) if state.session_engine and sender_is_agent else None
 
-    import mcp_bridge
     for target in targets:
         # Skip pending instances — they haven't been named/claimed yet
         if state.registry:
@@ -822,7 +821,7 @@ async def _handle_new_message(msg: dict):
         # Session guard: suppress out-of-turn agent triggers
         if allowed_agent and target != allowed_agent:
             continue
-        if not mcp_bridge.is_online(target):
+        if not mcp_state.is_online(target):
             state.store.add("system", f"{target} appears offline — message queued.", msg_type="system", channel=channel)
         if state.agents.is_available(target):
             await state.agents.trigger(target, message=chat_msg, channel=channel, prompt=custom_prompt)
@@ -1201,8 +1200,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             state.registry.set_label(agent_name, new_label)
                         else:
                             # Migrate presence + cursors to new name
-                            import mcp_bridge
-                            mcp_bridge.migrate_identity(agent_name, new_id)
+                            mcp_state.migrate_identity(agent_name, new_id)
                             # Update sender on all historical messages
                             state.store.rename_sender(agent_name, new_id)
                             # Notify clients so they can update sender in DOM
@@ -1240,8 +1238,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             else:
                                 # Rename succeeded — confirm new name
                                 state.registry.confirm_pending(new_id)
-                                import mcp_bridge
-                                mcp_bridge.migrate_identity(agent_name, new_id)
+                                mcp_state.migrate_identity(agent_name, new_id)
                                 # Update sender on all historical messages
                                 state.store.rename_sender(agent_name, new_id)
                                 rename_event = json.dumps({
@@ -1278,8 +1275,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 idx = state.room_settings["channels"].index(old_name)
                 state.room_settings["channels"][idx] = new_name
                 state.store.rename_channel(old_name, new_name)
-                import mcp_bridge
-                mcp_bridge.migrate_cursors_rename(old_name, new_name)
+                mcp_state.migrate_cursors_rename(old_name, new_name)
                 _save_settings()
                 await broadcast_settings()
                 # Tell clients to migrate DOM elements
@@ -1297,8 +1293,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 state.room_settings["channels"].remove(name)
                 state.store.delete_channel(name)
-                import mcp_bridge
-                mcp_bridge.migrate_cursors_delete(name)
+                mcp_state.migrate_cursors_delete(name)
                 _save_settings()
                 await broadcast_settings()
 
@@ -1811,7 +1806,6 @@ async def post_job_message(job_id: int, request: Request):
                 targets.append(t)
         targets = list(dict.fromkeys(targets))
 
-        import mcp_bridge
         chat_msg = f"{sender}: {text}" if text else ""
         for target in targets:
             if state.registry:
@@ -1877,20 +1871,18 @@ async def delete_job(job_id: int, request: Request):
 @app.get("/api/roles")
 async def get_roles():
     """Get all agent roles."""
-    import mcp_bridge
-    return mcp_bridge.get_all_roles()
+    return mcp_state.get_all_roles()
 
 
 @app.post("/api/roles/{agent_name}")
 async def set_agent_role(agent_name: str, request: Request):
     """Set or clear an agent's role."""
-    import mcp_bridge
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
     role = body.get("role", "").strip()
-    mcp_bridge.set_role(agent_name, role)
+    mcp_state.set_role(agent_name, role)
     await broadcast_status()
     return JSONResponse({"ok": True, "role": role})
 
@@ -1954,13 +1946,12 @@ async def register_agent(request: Request):
     if result is None:
         return JSONResponse({"error": f"unknown base: {base}"}, status_code=400)
     # Touch presence so the instance doesn't immediately time out
-    import mcp_bridge
-    with mcp_bridge._presence_lock:
-        mcp_bridge._presence[result["name"]] = __import__("time").time()
+    with mcp_state._presence_lock:
+        mcp_state._presence[result["name"]] = __import__("time").time()
     # If slot 1 was renamed (e.g. "claude" → "claude-1"), migrate state
     renamed = result.pop("_renamed_slot1", None)
     if renamed:
-        mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+        mcp_state.migrate_identity(renamed["old"], renamed["new"])
         state.store.rename_sender(renamed["old"], renamed["new"])
         if _event_loop:
             rename_event = json.dumps({
@@ -1998,13 +1989,12 @@ async def deregister_agent(name: str, request: Request):
     if result is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     # Clean up runtime state (presence, activity, cursors, rename chains)
-    import mcp_bridge
-    mcp_bridge.purge_identity(name)
+    mcp_state.purge_identity(name)
     state.registry.clean_renames_for(name)
     # If the remaining instance was renamed back (e.g. "claude-1" → "claude"), migrate state
     renamed = result.pop("_renamed_back", None)
     if renamed:
-        mcp_bridge.migrate_identity(renamed["old"], renamed["new"])
+        mcp_state.migrate_identity(renamed["old"], renamed["new"])
         state.store.rename_sender(renamed["old"], renamed["new"])
         if _event_loop:
             rename_event = json.dumps({
@@ -2045,8 +2035,7 @@ async def rename_agent_label(name: str, request: Request):
             return JSONResponse({"ok": True, "warning": result})
         return JSONResponse({"error": result}, status_code=400)
 
-    import mcp_bridge
-    mcp_bridge.migrate_identity(name, new_id)
+    mcp_state.migrate_identity(name, new_id)
     # Update sender on all historical messages
     state.store.rename_sender(name, new_id)
     return JSONResponse({"ok": True, "new_name": new_id})
@@ -2059,7 +2048,6 @@ async def heartbeat(agent_name: str, request: Request):
     Returns the canonical name from the registry so the wrapper can
     detect renames (e.g. claim renamed 'claude-2' to 'claude-music').
     """
-    import mcp_bridge
     auth_inst = _resolve_authenticated_agent(request)
     presented_token = _extract_agent_token(request)
     if presented_token and not auth_inst:
@@ -2068,16 +2056,16 @@ async def heartbeat(agent_name: str, request: Request):
         return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
 
     current_name = auth_inst["name"] if auth_inst else agent_name
-    with mcp_bridge._presence_lock:
-        mcp_bridge._presence[current_name] = __import__("time").time()
+    with mcp_state._presence_lock:
+        mcp_state._presence[current_name] = __import__("time").time()
     # Optional activity report from wrapper's terminal monitor
     _activity_changed = False
     try:
         body = await request.json()
         if "active" in body:
             active_val = bool(body["active"])
-            was_active = mcp_bridge._activity.get(current_name, False)
-            mcp_bridge.set_active(current_name, active_val)
+            was_active = mcp_state._activity.get(current_name, False)
+            mcp_state.set_active(current_name, active_val)
             _activity_changed = was_active != active_val
     except Exception:
         pass  # No body = plain heartbeat
@@ -2105,8 +2093,8 @@ async def heartbeat(agent_name: str, request: Request):
             # Also update presence under the canonical name
             if canonical != current_name:
                 now = __import__("time").time()
-                with mcp_bridge._presence_lock:
-                    mcp_bridge._presence[canonical] = now
+                with mcp_state._presence_lock:
+                    mcp_state._presence[canonical] = now
     return resp
 
 

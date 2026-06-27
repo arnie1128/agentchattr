@@ -61,15 +61,17 @@ def main():
     from app import app, configure, set_event_loop
     configure(config, session_token=session_token)
 
-    # mcp_bridge reads the same app_state.state object — no re-export needed.
+    # mcp_bridge (tools/servers) and mcp_state (presence/cursors/roles) both read
+    # the same app_state.state object — no re-export needed.
     import mcp_bridge
+    import mcp_state
 
     # Enable cursor and role persistence across restarts
     data_dir = ROOT / config.get("server", {}).get("data_dir", "./data")
-    mcp_bridge._CURSORS_FILE = data_dir / "mcp_cursors.json"
-    mcp_bridge._load_cursors()
-    mcp_bridge._ROLES_FILE = data_dir / "roles.json"
-    mcp_bridge._load_roles()
+    mcp_state._CURSORS_FILE = data_dir / "mcp_cursors.json"
+    mcp_state._load_cursors()
+    mcp_state._ROLES_FILE = data_dir / "roles.json"
+    mcp_state._load_roles()
 
     # Start MCP servers in background threads
     http_port = config.get("mcp", {}).get("http_port", 8200)
