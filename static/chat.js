@@ -18,7 +18,7 @@ let replyingTo = null;  // { id, sender, text } or null
 let unreadCount = 0;    // messages received while scrolled up
 let lastMessageDate = null;  // track date for dividers (general channel)
 let lastMessageDates = {};  // { channel: dateString } for per-channel dividers
-let soundEnabled = false;  // suppress sounds during initial history load
+Store.set('soundEnabled', false);  // suppress sounds during initial history load — single owner is Store (FE-3)
 // activeChannel: single owner is Store (FE-3). Seed it from localStorage.
 Store.set('activeChannel', localStorage.getItem('agentchattr-channel') || 'general');
 Store.set('channelList', ['general']);  // single owner is Store (FE-3)
@@ -42,7 +42,7 @@ window._setPendingChannelSwitch = function(v) { pendingChannelSwitch = v; };
 Object.defineProperty(window, 'username', { get() { return username; } });
 Object.defineProperty(window, 'agentConfig', { get() { return agentConfig; } });
 Object.defineProperty(window, 'ws', { get() { return ws; } });
-Object.defineProperty(window, 'soundEnabled', { get() { return soundEnabled; } });
+Object.defineProperty(window, 'soundEnabled', { get() { return Store.get('soundEnabled'); } });
 Object.defineProperty(window, 'rules', { get() { return rules; }, set(v) { rules = v; } });
 Object.defineProperty(window, 'autoScroll', { get() { return autoScroll; } });
 Object.defineProperty(window, '_lastMentionedAgent', {
@@ -392,7 +392,7 @@ function connectWebSocket() {
             return;
         }
         console.log('Disconnected, reconnecting in 2s...');
-        soundEnabled = false;  // suppress sounds during reconnect history replay
+        Store.set('soundEnabled', false);  // suppress sounds during reconnect history replay
         const loader = document.getElementById('loading-indicator');
         if (loader) loader.classList.remove('hidden');
         reconnectTimer = setTimeout(connectWebSocket, 2000);
@@ -473,7 +473,7 @@ function appendMessage(msg) {
     if (msgChannel !== activeChannel) {
         el.style.display = 'none';
         // Track unread for background channels (skip joins/leaves and initial history load)
-        if (soundEnabled && msg.type !== 'join' && msg.type !== 'leave') {
+        if (Store.get('soundEnabled') && msg.type !== 'join' && msg.type !== 'leave') {
             const _cu = Store.get('channelUnread');
             _cu[msgChannel] = (_cu[msgChannel] || 0) + 1;
             renderChannelTabs();
@@ -4015,7 +4015,7 @@ Hub.on('message_update', function (event) {
 
 Hub.on('message', function (event) {
     // Play notification sound for new messages from others (not joins, not when focused)
-    if (soundEnabled && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
+    if (Store.get('soundEnabled') && !document.hasFocus() && event.data.type !== 'join' && event.data.type !== 'leave' && event.data.type !== 'summary' && event.data.sender && event.data.sender.toLowerCase() !== username.toLowerCase()) {
         playNotificationSound(event.data.sender);
     }
     appendMessage(event.data);
@@ -4106,8 +4106,8 @@ Hub.on('todo_update', function (event) {
 Hub.on('status', function (event) {
     updateStatus(event.data);
     // Status is the last event sent on connect — enable sounds after history
-    if (!soundEnabled) {
-        soundEnabled = true;
+    if (!Store.get('soundEnabled')) {
+        Store.set('soundEnabled', true);
         const loader = document.getElementById('loading-indicator');
         if (loader) loader.classList.add('hidden');
         filterMessagesByChannel();
