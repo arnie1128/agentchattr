@@ -1,8 +1,9 @@
 /**
  * core.js -- EventHub for agentchattr
  *
- * Tiny pub/sub hub. WebSocket events are emitted here so modules can
- * subscribe without touching the legacy switch statement in chat.js.
+ * Tiny pub/sub hub. Inbound WebSocket events are emitted here (from
+ * connectWebSocket in chat.js) and every module — chat.js included —
+ * subscribes via Hub.on. There is no central switch statement.
  *
  * Usage:
  *   Hub.on('session', (data) => { ... });
