@@ -138,6 +138,30 @@ def _install_security_middleware(token: str, cfg: dict):
     app.add_middleware(SecurityMiddleware)
 
 
+def reachable(name: str) -> bool:
+    """Single source of truth for "can this agent receive a routed message".
+
+    Reachable = claimed (an active identity in the registry) AND present (a
+    fresh MCP heartbeat). Registry owns identity; mcp_state owns presence; this
+    is the one place they are combined. Used by @all routing (see
+    `reachable_names`). The explicit-@mention send gate intentionally gates on
+    presence alone (`mcp_state.is_online`) so an offline-but-claimed mention is
+    queued rather than dropped — a deliberately different decision.
+    """
+    return (
+        bool(state.registry)
+        and name in state.registry.get_active_names()
+        and mcp_state.is_online(name)
+    )
+
+
+def reachable_names() -> set[str]:
+    """The set of reachable agents (claimed AND present) — for @all expansion."""
+    if not state.registry:
+        return set()
+    return {n for n in state.registry.get_active_names() if mcp_state.is_online(n)}
+
+
 def configure(cfg: dict, session_token: str = ""):
     state.config = cfg
     # --- Security: store the session token and install middleware ---
@@ -193,13 +217,10 @@ def configure(cfg: dict, session_token: str = ""):
         agent_names=agent_names,
         default_mention=cfg.get("routing", {}).get("default", "none"),
         max_hops=max_hops,
-        # @all must only tag agents that are reachable = active (claimed
-        # identity) AND present (fresh MCP heartbeat). Gating on is_online —
-        # the same predicate the send path uses — keeps @all from tagging a
-        # claimed-but-offline agent that could never receive the message.
-        online_checker=lambda: {
-            n for n in state.registry.get_active_names() if mcp_state.is_online(n)
-        } if state.registry else set(),
+        # @all must only tag reachable agents (claimed identity AND fresh MCP
+        # heartbeat). reachable_names() is the single source for that predicate;
+        # see reachable() for why the explicit-mention send gate differs.
+        online_checker=reachable_names,
     )
     state.agents = AgentTrigger(state.registry, data_dir=data_dir)
 
@@ -261,26 +282,14 @@ def configure(cfg: dict, session_token: str = ""):
             # Short timeout (10s) prevents slot theft when MCP tool calls are intermittent.
             try:
                 now = _time.time()
-                with mcp_state._presence_lock:
-                    currently_online = {
-                        name for name, ts in mcp_state._presence.items()
-                        if now - ts < mcp_state.PRESENCE_TIMEOUT
-                    }
-                    currently_active = set()
-                    for name, active in mcp_state._activity.items():
-                        if active:
-                            if now - mcp_state._activity_ts.get(name, 0) < mcp_state.ACTIVITY_TIMEOUT:
-                                currently_active.add(name)
-                            else:
-                                mcp_state._activity[name] = False  # auto-expire
+                currently_online, currently_active = mcp_state.sweep()
 
                 # Crash timeout: if a wrapper hasn't heartbeated for 60s,
                 # it's dead — deregister it to free the slot.
                 _CRASH_TIMEOUT = 15
                 registered = set(state.registry.get_all_names())
                 for name in registered:
-                    with mcp_state._presence_lock:
-                        last_seen = mcp_state._presence.get(name, 0)
+                    last_seen = mcp_state.last_seen(name)
                     if last_seen > 0 and now - last_seen > _CRASH_TIMEOUT:
                         log.info(f"Crash timeout: deregistering {name} (no heartbeat for {_CRASH_TIMEOUT}s)")
                         result = state.registry.deregister(name)
@@ -311,11 +320,7 @@ def configure(cfg: dict, session_token: str = ""):
                     if not inst:
                         continue
                     # Skip names that were just renamed (not actually offline)
-                    with mcp_state._presence_lock:
-                        was_renamed = name in mcp_state._renamed_from
-                        if was_renamed:
-                            mcp_state._renamed_from.discard(name)
-                    if was_renamed:
+                    if mcp_state.pop_renamed(name):
                         continue
                     # Post leave message ONCE per offline transition (debounced)
                     if name not in _posted_leave:
@@ -329,11 +334,7 @@ def configure(cfg: dict, session_token: str = ""):
                 went_offline = (_known_online - currently_online) - timed_out
                 for name in went_offline:
                     # Skip leave messages for names that were just renamed
-                    with mcp_state._presence_lock:
-                        was_renamed = name in mcp_state._renamed_from
-                        if was_renamed:
-                            mcp_state._renamed_from.discard(name)
-                    if was_renamed:
+                    if mcp_state.pop_renamed(name):
                         continue
                     if not state.registry.is_registered(name) and name not in _posted_leave:
                         _posted_leave.add(name)
@@ -343,13 +344,9 @@ def configure(cfg: dict, session_token: str = ""):
                     asyncio.run_coroutine_threadsafe(broadcast_status(), _event_loop)
 
                 # Clear stale activity for agents that went offline
-                with mcp_state._presence_lock:
-                    stale_active = [n for n in mcp_state._activity
-                                    if mcp_state._activity.get(n) and n not in currently_online]
-                    for n in stale_active:
-                        mcp_state._activity[n] = False
-                    if stale_active:
-                        currently_active -= set(stale_active)
+                stale_active = mcp_state.clear_activity_offline(currently_online)
+                if stale_active:
+                    currently_active -= set(stale_active)
 
                 # Broadcast status on any change (online set or activity set)
                 if currently_active != _known_active or _known_online != currently_online:
@@ -1651,8 +1648,7 @@ async def register_agent(request: Request):
     if result is None:
         return JSONResponse({"error": f"unknown base: {base}"}, status_code=400)
     # Touch presence so the instance doesn't immediately time out
-    with mcp_state._presence_lock:
-        mcp_state._presence[result["name"]] = __import__("time").time()
+    mcp_state.touch_presence(result["name"])
     # If slot 1 was renamed (e.g. "claude" → "claude-1"), migrate state
     renamed = result.pop("_renamed_slot1", None)
     if renamed:
@@ -1761,17 +1757,14 @@ async def heartbeat(agent_name: str, request: Request):
         return JSONResponse({"error": "authenticated agent session required"}, status_code=403)
 
     current_name = auth_inst["name"] if auth_inst else agent_name
-    with mcp_state._presence_lock:
-        mcp_state._presence[current_name] = __import__("time").time()
+    mcp_state.touch_presence(current_name)
     # Optional activity report from wrapper's terminal monitor
     _activity_changed = False
     try:
         body = await request.json()
         if "active" in body:
             active_val = bool(body["active"])
-            was_active = mcp_state._activity.get(current_name, False)
-            mcp_state.set_active(current_name, active_val)
-            _activity_changed = was_active != active_val
+            _activity_changed = mcp_state.report_active(current_name, active_val)
     except Exception:
         pass  # No body = plain heartbeat
     # Immediately broadcast on activity state change (don't wait for background checker)
@@ -1797,9 +1790,7 @@ async def heartbeat(agent_name: str, request: Request):
             resp["pending"] = inst.get("state") == "pending"
             # Also update presence under the canonical name
             if canonical != current_name:
-                now = __import__("time").time()
-                with mcp_state._presence_lock:
-                    mcp_state._presence[canonical] = now
+                mcp_state.touch_presence(canonical)
     return resp
 
 

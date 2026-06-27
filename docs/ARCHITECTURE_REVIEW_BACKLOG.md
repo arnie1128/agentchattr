@@ -23,7 +23,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-SRV-3 | P3 | **done** | `version_check` local renamed to `release_state`; singleton no longer shadowed |
 | NEW-SRV-4 | P3 | open | `start_session` pokes `session_store._templates` directly (app.py:1914) |
 | NEW-SRV-5 | P3 | open | `/continue` handled in two places; WS path ignores the channel (app.py:847) |
-| STATE-1 | P1 | open | presence/identity/router still 3 reachability owners; 24 private pokes; never started |
+| STATE-1 | P1 | **done** | one `reachable()`/`reachable_names()` predicate (app.py) + presence ops encapsulated in `mcp_state` (sweep/last_seen/pop_renamed/clear_activity_offline/report_active); 0 private pokes in app.py/mcp_bridge; +MCP-3(b) |
 | STATE-3 | P2 | done | `0d61519` `_enrich` copies; view fields stay off the record |
 | STATE-4 | P2 | partial | `6d3e6d8` `atomic_io` helper exists, but O(n) per-message rewrite + registry rename-save untouched |
 | STATE-5 | P2 | partial | `6e72c2e` `naming.py` pure leaves only; view/auth/4× policy orchestration remain in registry |
@@ -33,7 +33,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-STATE-PERSIST-2 | P3 | open | `JobStore.list_all` is a read that writes to disk (jobs.py:91-93) |
 | MCP-1 | P1 | done | `ad6e7bf` token-derived identity; proxy forwards raw bytes |
 | MCP-2 | P1 | open (verify-gated) | codex direct-bearer inject → delete `mcp_proxy.py`; needs one live codex run |
-| MCP-3 | P2 | partial | `025d911` `mcp_state.py` landed; `chat_set_hat` still `import app`; inline presence pokes remain |
+| MCP-3 | P2 | partial | `025d911` `mcp_state.py`; (b) inline presence pokes now via `touch_presence` (done with STATE-1); (a) `chat_set_hat` still `import app` → MCP-3a |
 | NEW-MCP-1 | P2 | open | `chat_send` god-function: duplicated image-upload + duplicated @mention-trigger loop |
 | NEW-MCP-2 | P3 | open | MCP read contract serialized in 3 divergent inline shapes |
 | WRAP-1 | P1 | done | `31c6e78` `server_client.py` single HTTP contract |
@@ -74,7 +74,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-SRV-3 | Done (B0) | renamed local to release_state |
 | NEW-SRV-4 | Do (B4) | public transient-template method |
 | NEW-SRV-5 | Do | fix channel-arg now (correctness); collapse dup B4 |
-| STATE-1 | Do (B1) | top structural P1; one reachable() predicate |
+| STATE-1 | Done (B1) | one reachable() predicate; presence encapsulated in-place in mcp_state (see note) |
 | STATE-3 | Done | _enrich copies |
 | STATE-4 | Do (a) / Accept (b) | atomic rename-save yes; O(n) accepted+documented (bounded) |
 | STATE-5 | Do / Accept | NamingPolicy + view move; resolve_token & _inst_dict stay |
@@ -243,13 +243,14 @@ The hats-persistence sub-item is **already satisfied by SRV-6** (HatStore owns `
 
 ### State & persistence — `router / session_engine / session_store / store / registry / jobs / mcp_state`
 
-#### STATE-1 — presence/identity/router are 3 owners of "is this agent reachable" (P1, open)
+#### STATE-1 — presence/identity/router are 3 owners of "is this agent reachable" (P1, done)
 **Decision (定案):** **Do (Batch 1) — the highest-value open P1.** Extract `presence_service.py` exposing one `reachable() = active and present`; registry becomes identity-only; the reaper subscribes instead of holding the lock. Absorbs MCP-3(b). Preserve the intentional queue-on-offline behaviour for an explicit offline @mention.
 
 Confirmed open and never started. `grep -cE 'mcp_state\._' app.py` = **24** (verified: `_presence_lock`×8, `_presence`×5, `_activity`×6, `_activity_ts`×1, `_renamed_from`×4). No presence-service module exists. Three open-coded reachability owners: `registry.get_active_names()` = claimed/identity (registry.py:401-403); `mcp_state.is_online()` = present/heartbeat (mcp_state.py:190-193); router `online_checker` open-codes active∧present inline (app.py:200-202). The reaper (app.py:262-361) holds `mcp_state._presence_lock` directly. Note on the divergence: the send path **does** skip pending at app.py:657, so for registered instances its gate is effectively active-and-present like `@all`; the real fork is at app.py:662 — an offline-but-claimed explicit `@mention` is **not** dropped (posts "offline — queued" and still attempts trigger), whereas `@all` silently excludes it. That queue-on-offline behavior is partly intentional and must be preserved.
 - **Approach (方案):** extract a `PresenceService` owning presence/activity/cursor state (wrapping the current `mcp_state` globals) exposing ONE `reachable(name)=active∧present` query plus `subscribe()`. Registry stays identity-only. `@all`'s `online_checker` and the send-gate offline branch (app.py:662) both call `reachable()`; the send-gate keeps its own "attempt-anyway + queue" policy on top of the shared predicate. The reaper subscribes to presence-expiry events instead of holding the lock.
 - **Fix scope (修正範圍):** new `presence_service.py` (~80-120 lines, absorbs mcp_state presence/activity/renamed_from); repoint the 24 private pokes in app.py (reaper 262-361 + heartbeat handlers 1654/1764/1801) + the router lambda (200-202) + send-gate (662); wiring in run.py:71-74. ~3-4 files. Medium. (Folds in MCP-3's presence facet.)
 - **Completion criteria (達成條件):** `grep -nE 'mcp_state\._(presence|activity|renamed_from)' app.py` → 0 (no app.py code holds the presence lock); exactly ONE `reachable(name)` definition exists; `@all`'s `online_checker` and the send-gate offline branch each call it (one call site each, no open-coded `get_active_names()`+`is_online()` combo left); `test_mcp_state` and `test_router` green.
+- **Done — execution note (two deliberate clean-arch deviations):** (1) **No new `presence_service.py`.** Presence/activity ownership stayed in `mcp_state`, which already owns it co-located with `migrate_identity`/`purge_identity` (those atomically move an agent's *whole* runtime state on rename/deregister; a separate presence module would fracture that). Instead, public ops were added to `mcp_state` — `touch_presence`, `sweep()→(online,active)`, `last_seen`, `pop_renamed`, `clear_activity_offline`, `report_active` — each unit-tested, and app.py's reaper + heartbeat handlers + mcp_bridge's inline writes all route through them. `grep mcp_state._(presence|activity|renamed_from)` across app.py + mcp_bridge → 0. (2) **Send-gate kept on `is_online`** (presence-only), NOT `reachable`. `@all` (which must not tag a claimed-but-offline agent) and the explicit-mention gate (which intentionally *queues* an offline-but-claimed mention) are genuinely different decisions; unifying them would conflate them. `reachable()`/`reachable_names()` is the single predicate for `@all` only. Folds in **MCP-3(b)**. Reaper orchestration glue is behavior-preserving (its primitives are the now-tested `mcp_state` ops); it is not separately boot-tested. Tests: +`test_reachable` (4) + `test_mcp_state` presence-API (7).
 
 #### STATE-3 — `_enrich` writes derived fields onto a copy (P2, done)
 **Decision (定案):** Done — closed.

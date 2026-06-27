@@ -73,6 +73,58 @@ class McpStateTests(unittest.TestCase):
         mcp_state._update_cursor("claude", [{"id": 7}, {"id": 9}], "general")
         self.assertEqual(mcp_state._cursors["claude"]["general"], 9)
 
+    # --- Presence service API (STATE-1) ---
+
+    def test_touch_presence_public_alias(self):
+        mcp_state.touch_presence("claude")
+        self.assertTrue(mcp_state.is_online("claude"))
+
+    def test_sweep_reports_online_and_active(self):
+        import time
+        now = time.time()
+        mcp_state._presence["claude"] = now
+        mcp_state._presence["stale"] = now - mcp_state.PRESENCE_TIMEOUT - 1
+        mcp_state._activity["claude"] = True
+        mcp_state._activity_ts["claude"] = now
+        online, active = mcp_state.sweep()
+        self.assertEqual(online, {"claude"})
+        self.assertEqual(active, {"claude"})
+
+    def test_sweep_auto_expires_stale_activity(self):
+        import time
+        now = time.time()
+        mcp_state._presence["claude"] = now
+        mcp_state._activity["claude"] = True
+        mcp_state._activity_ts["claude"] = now - mcp_state.ACTIVITY_TIMEOUT - 1
+        _, active = mcp_state.sweep()
+        self.assertEqual(active, set())
+        self.assertFalse(mcp_state._activity["claude"])  # expired in place
+
+    def test_last_seen_returns_timestamp(self):
+        import time
+        self.assertEqual(mcp_state.last_seen("nobody"), 0)
+        t = time.time()
+        mcp_state._presence["claude"] = t
+        self.assertEqual(mcp_state.last_seen("claude"), t)
+
+    def test_pop_renamed_is_one_shot(self):
+        mcp_state._renamed_from.add("claude-2")
+        self.assertTrue(mcp_state.pop_renamed("claude-2"))
+        self.assertFalse(mcp_state.pop_renamed("claude-2"))  # cleared after first pop
+
+    def test_clear_activity_offline(self):
+        mcp_state._activity["on"] = True
+        mcp_state._activity["off"] = True
+        cleared = mcp_state.clear_activity_offline({"on"})
+        self.assertEqual(cleared, ["off"])
+        self.assertTrue(mcp_state._activity["on"])
+        self.assertFalse(mcp_state._activity["off"])
+
+    def test_report_active_returns_changed(self):
+        self.assertTrue(mcp_state.report_active("claude", True))    # False -> True
+        self.assertFalse(mcp_state.report_active("claude", True))   # no change
+        self.assertTrue(mcp_state.report_active("claude", False))   # True -> False
+
 
 if __name__ == "__main__":
     unittest.main()

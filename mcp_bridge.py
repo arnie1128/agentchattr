@@ -251,8 +251,7 @@ def chat_send(
                                attachments=job_attachments)
         if msg is None:
             return f"Error: job #{job_id} not found."
-        with mcp_state._presence_lock:
-            mcp_state._presence[sender] = time.time()
+        mcp_state.touch_presence(sender)
 
         # Route @mentions in job messages to trigger other agents
         if state.router and state.agents:
@@ -318,8 +317,7 @@ def chat_send(
                     reply_to=reply_id, channel=channel,
                     msg_type=msg_type, metadata=metadata)
     mcp_state._update_cursor(sender, [msg], channel)
-    with mcp_state._presence_lock:
-        mcp_state._presence[sender] = time.time()
+    mcp_state.touch_presence(sender)
     return f"Sent (id={msg['id']})"
 
 
@@ -354,8 +352,7 @@ def chat_propose_job(
         metadata={"title": title, "body": body, "status": "pending"},
     )
     mcp_state._update_cursor(sender, [msg], channel)
-    with mcp_state._presence_lock:
-        mcp_state._presence[sender] = time.time()
+    mcp_state.touch_presence(sender)
     return f"Proposed job (msg_id={msg['id']}): {title}"
 
 

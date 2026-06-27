@@ -211,3 +211,80 @@ def is_active(name: str) -> bool:
             _activity[name] = False
             return False
         return True
+
+
+# --- Presence service API (STATE-1) ---
+# Operations the web server's presence reaper and heartbeat handlers use, so
+# app.py no longer holds `_presence_lock` or pokes `_presence`/`_activity`/
+# `_renamed_from` directly. Presence/activity ownership stays here, co-located
+# with migrate_identity/purge_identity (which atomically move an agent's whole
+# runtime state on rename/deregister).
+
+def touch_presence(name: str):
+    """Mark an agent present now (register / heartbeat / any MCP tool use)."""
+    _touch_presence(name)
+
+
+def sweep() -> tuple[set[str], set[str]]:
+    """Reaper sweep: return (online, active) name sets by timeout.
+
+    online = present within PRESENCE_TIMEOUT. active = activity flag set AND a
+    fresh active heartbeat within ACTIVITY_TIMEOUT; stale flags are auto-expired
+    in place (mirrors the old inline reaper body).
+    """
+    now = time.time()
+    online: set[str] = set()
+    active: set[str] = set()
+    with _presence_lock:
+        for name, ts in _presence.items():
+            if now - ts < PRESENCE_TIMEOUT:
+                online.add(name)
+        for name, is_act in list(_activity.items()):
+            if not is_act:
+                continue
+            if now - _activity_ts.get(name, 0) < ACTIVITY_TIMEOUT:
+                active.add(name)
+            else:
+                _activity[name] = False  # auto-expire stale activity
+    return online, active
+
+
+def last_seen(name: str) -> float:
+    """Last presence timestamp for `name` (0 if never seen). For the crash timeout."""
+    with _presence_lock:
+        return _presence.get(name, 0)
+
+
+def pop_renamed(name: str) -> bool:
+    """If `name` is a just-renamed old identity, clear the flag and return True.
+
+    Lets the reaper suppress a spurious leave message for the old name.
+    """
+    with _presence_lock:
+        if name in _renamed_from:
+            _renamed_from.discard(name)
+            return True
+        return False
+
+
+def clear_activity_offline(online: set[str]) -> list[str]:
+    """Set activity False for any active agent not in `online`; return cleared names."""
+    with _presence_lock:
+        stale = [n for n in _activity if _activity.get(n) and n not in online]
+        for n in stale:
+            _activity[n] = False
+    return stale
+
+
+def report_active(name: str, active: bool) -> bool:
+    """Set an agent's activity flag and return whether it changed.
+
+    Folds the heartbeat's read-then-set so the handler can broadcast on a real
+    transition without poking `_activity` itself.
+    """
+    with _presence_lock:
+        was = _activity.get(name, False)
+        _activity[name] = active
+        if active:
+            _activity_ts[name] = time.time()
+    return was != active
