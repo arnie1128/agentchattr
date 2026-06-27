@@ -12,7 +12,7 @@ let username = 'user';
 let agentConfig = {};  // { name: { color, label } } — registered instances (used for pills)
 let baseColors = {};   // { name: { color, label } } — base agent colors (for message coloring)
 let todos = {};  // { msg_id: "todo" | "done" }
-let rules = [];  // array of rule objects from server
+Store.set('rules', []);  // array of rule objects from server — single owner is Store (FE-3)
 let activeMentions = new Set();  // agent names with pre-@ toggled on
 let replyingTo = null;  // { id, sender, text } or null
 let unreadCount = 0;    // messages received while scrolled up
@@ -43,7 +43,7 @@ Object.defineProperty(window, 'username', { get() { return username; } });
 Object.defineProperty(window, 'agentConfig', { get() { return agentConfig; } });
 Object.defineProperty(window, 'ws', { get() { return ws; } });
 Object.defineProperty(window, 'soundEnabled', { get() { return Store.get('soundEnabled'); } });
-Object.defineProperty(window, 'rules', { get() { return rules; }, set(v) { rules = v; } });
+Object.defineProperty(window, 'rules', { get() { return Store.get('rules'); }, set(v) { Store.set('rules', v); } });
 Object.defineProperty(window, 'autoScroll', { get() { return autoScroll; } });
 Object.defineProperty(window, '_lastMentionedAgent', {
     get() { return Store.get('_lastMentionedAgent'); },
@@ -4134,7 +4134,7 @@ Hub.on('delete', function (event) {
 
 ['rules', 'decisions'].forEach(function (t) {
     Hub.on(t, function (event) {
-        rules = event.data || [];
+        Store.set('rules', event.data || []);
         renderRulesPanel();
         updateRulesBadge();
     });
