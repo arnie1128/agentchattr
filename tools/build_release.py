@@ -17,7 +17,8 @@ OUT_NAME = f"agentchattr-{VERSION}"
 # Library modules live under the agentchattr/ package (an INCLUDE_DIR); only the
 # root entry scripts are listed here individually.
 INCLUDE_FILES = [
-    "open_chat.html",
+    "launch.cmd",
+    "launch.sh",
     "requirements.txt",
     "README.md",
     "LICENSE",

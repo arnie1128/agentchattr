@@ -40,7 +40,7 @@ On first launch, the script auto-creates a virtual environment, installs Python 
 
 </details>
 
-**2. Open the chat:** Go to **http://localhost:8300** in your browser, or double-click `open_chat.html`.
+**2. Open the chat:** Go to **http://localhost:8300** in your browser.
 
 **3. Talk to your agents:** Type `@claude`, `@codex`, `@gemini`, `@copilot`, `@kimi`, `@qwen`, `@kilo`, `@codebuddy`, or `@minimax` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
 
@@ -85,7 +85,7 @@ On first launch, the script auto-creates a virtual environment, installs Python 
 
 </details>
 
-**3. Open the chat:** Go to **http://localhost:8300** or open `open_chat.html`.
+**3. Open the chat:** Go to **http://localhost:8300**.
 
 **4. Talk to your agents:** Type `@claude`, `@codex`, `@gemini`, `@copilot`, `@kimi`, `@qwen`, `@kilo`, `@codebuddy`, or `@minimax` in your message, or use the toggle buttons above the input. The agent will wake up, read the chat, and respond.
 

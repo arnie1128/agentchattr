@@ -134,8 +134,11 @@ Any scheme works as long as nothing collides.
 
 The thin wrappers source `_load.sh` / call `_load.py` to read
 `config.toml` and export `AGENTCHATTR_*` environment variables, then
-hand off to the main agentchattr install's launcher scripts (under
-`agentchattr/launchers/macos-linux/` or `agentchattr/launchers/windows/`).
+hand off to the engine's single stable entry — `agentchattr/launch.sh`
+(macOS / Linux) or `agentchattr/launch.cmd` (Windows) — e.g.
+`launch.sh codex`. The engine's internal launchers can move without
+breaking this instance. Use `open.cmd` / `open.sh` to open this
+instance's chat room in the browser.
 
 ## Troubleshooting
 

@@ -23,5 +23,5 @@ if "%AGENTCHATTR_ROOT%"=="" (
     exit /b 1
 )
 
-call "%AGENTCHATTR_ROOT%\launchers\windows\start.bat" %*
+call "%AGENTCHATTR_ROOT%\launch.cmd" server %*
 endlocal
