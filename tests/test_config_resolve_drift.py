@@ -1,6 +1,6 @@
 """Drift guard for the intentionally-duplicated path resolver (WRAP-6).
 
-config_loader.resolve_path and templates/project/_load.py:resolve are kept as
+config_loader.resolve_path and project-template/_load.py:resolve are kept as
 two copies on purpose (the template runs before agentchattr's install dir is
 located, so it cannot import config_loader). This asserts the two stay in sync
 across absolute / ~user / relative inputs, so a silent edit to one is caught.
@@ -19,7 +19,7 @@ import config_loader  # noqa: E402
 
 
 def _load_template_module():
-    path = ROOT / "templates" / "project" / "_load.py"
+    path = ROOT / "project-template" / "_load.py"
     spec = importlib.util.spec_from_file_location("_agentchattr_load_template", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
