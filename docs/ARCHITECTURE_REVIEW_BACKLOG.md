@@ -49,7 +49,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | FE-4 | P3 | done | inbound `onmessage` → `Hub.emit` only (chat.js:379-384) |
 | FE-5 | P3 | done | `appendMessage` → `_messageRenderers` registry |
 | FE-6 | P1 | -> real-machine phase | **DECISION: do**, after FE-3, in the real-machine phase (#78) — message-model rewrite needs runtime verification |
-| NEW-FE-chatjs-split | P3 | -> real-machine phase | Tier-A 'leaves' (sounds.js) in fact couple to `soundEnabled` (FE-3) and are chat.js-called; do with FE-3 in the real-machine phase (#78) |
+| NEW-FE-chatjs-split | P3 | **Tier-A done (code); Tier-B → RM-6 phase** | `0bb67aa`/`4e74327`/`9c92cdd` — sounds.js/version-pill.js/help.js leaves extracted (chat.js 4254→3536). Tier-B (naming-lightbox/settings) are coupled feature-panels → sequenced with FE-5 into the RM-6 runtime phase |
 
 **Tests:** 16 `unittest` modules. `python -m unittest discover -s tests` runs **145 tests green** here; `test_app_state` and `test_archive_feature` need `fastapi` and error on import when it is absent (optional-dependency gap, not a regression). **No test covers `/ws`-connect or app boot** — that gap is exactly why the two SRV-2 `NameError`s shipped uncaught; both fixes must add a smoke test. The three large mechanical refactors (SRV-2, MCP-3, FE-3) used a `tokenize`-based renamer to avoid corrupting strings/comments.
 
@@ -100,7 +100,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | FE-4 | Done | onmessage -> Hub.emit |
 | FE-5 | Done | _messageRenderers registry |
 | FE-6 | Do (real-machine #78) | real defect; message model, runtime-verified |
-| NEW-FE-chatjs-split | Do (real-machine #78) | couples to FE-3; do together on real machine |
+| NEW-FE-chatjs-split | **Tier-A done; Tier-B → RM-6** | 3 leaves out (chat.js 4254→3536); Tier-B panels with FE-5 in runtime phase |
 
 ---
 ## How to read this
@@ -443,8 +443,10 @@ Confirmed deferred. No JS model for channel messages: `grep 'let messages|messag
 - **Fix scope (修正範圍):** `chat.js` — add a model + repoint the scrape sites (623-626, 779-796, 2368-2374, 2393-2398, 2737-2739, 4023-4077) plus `appendMessage`/`_renderChat` and the history-load/clear/edit handlers (4175-4236). High. Root cause behind FE-2's `appendMessage` blocker and the recolor/rename DOM walks. **Sequence after FE-1/2/3.**
 - **Completion criteria (達成條件):** a messages model (`Map<id,msg>` or array) owns message data AND `grep 'dataset.rawText'` reads and `querySelector('.msg-sender').textContent` reads in chat.js → 0 (reads come from the model) AND reply/recolor/rename/copy/pins operate on the model, not scraped nodes.
 
-#### NEW-FE-chatjs-split — finish the monolith breakup (P3, open) · NEW this audit
+#### NEW-FE-chatjs-split — finish the monolith breakup (P3, Tier-A done; Tier-B pending) · NEW this audit
 **Decision (定案):** **Do Tier-A now (Batch 4)** — sounds.js / version-pill.js / help.js are dependency-free leaves (~200 lines out today). **Tier-B** (naming-lightbox, settings) sequenced after FE-3. The flat <2500-line target is dropped as the gate; FE-3 is the gate.
+
+**Status — Tier-A DONE (code), `0bb67aa`/`4e74327`/`9c92cdd`:** three genuinely-self-contained leaves sliced out (script-based line-slice): `sounds.js` (sound engine, 91 lines — localStorage prefs + `Store.get('agentConfig')` only), `version-pill.js` (update pill, 32 lines — api.js + DOM), `help.js` (the **full** help-tour cluster, 524 lines — DOM/localStorage + its own `_help*` state, **zero** Store/app-state refs, verified by grep). The doc's "~80 line" help estimate was wrong: the cluster (toggleHelp → _helpCardDefs → _openHelpAnchored/Stacked → openHelp/closeHelp/initHelpTour + state) is contiguous and self-contained, so it moved as one. chat.js: **4254 → 3536 lines**. Each leaf's `<script>` is loaded after store.js; callers resolve via classic-script shared global scope + explicit window exports. `node --check` × 13 + grep (each moved fn defined once in its leaf, 0 in chat.js). **Tier-B (naming-lightbox + settings) NOT done:** unlike the Tier-A leaves these are *feature panels* that call chat.js render helpers (recolorMessages/buildStatusPills/buildMentionToggles/applyConfig), i.e. leaf→god calls — extracting them is the channels.js/jobs.js panel pattern, not a clean leaf move, and their correctness hinges on those cross-module calls firing at runtime. Sequenced into the RM-6 runtime phase with FE-5 (see §5 / TaskList).
 
 chat.js = **4254 lines, 132 top-level functions**. Genuinely self-contained leaves: sound engine (`SOUND_OPTIONS` 71, `playNotificationSound` 86 — localStorage prefs only), version/update-pill (~200-224), help-tour (`openHelp`/`closeHelp`/`initHelpTour` ~3974-3989). **But** the naming-lightbox (`_pendingNameQueue` 995+), color-override picker (`colorOverrides` writes 1251-1295), and settings panel + custom-roles (1437-1702) are state-coupled to chat.js `let`s (`colorOverrides`, `agentConfig`, `window.customRoles`) — the same coupling FE-2/FE-3 face (`colorOverrides` has no window bridge today), so they are NOT "low-risk mechanical" yet. The flat "drops below 2500 lines" target was over-optimistic — it needs FE-3 first.
 - **Approach (方案):** continue the channels.js/rules-panel.js extraction pattern in two tiers. **Tier A (now):** dependency-free leaves — `sounds.js` (SOUND_OPTIONS/playNotificationSound + `Hub.on('settings')` wiring), `version-pill.js`, `help.js`; each exposes `init()`+window handlers and subscribes to Hub. **Tier B (after FE-3):** `naming-lightbox.js` and `settings.js`, once `colorOverrides`/`agentConfig`/`customRoles` live in Store (or have explicit bridges).
