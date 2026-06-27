@@ -41,7 +41,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | WRAP-3 | P2 | **done (right-sized)** | `9cf1af6` argparse/proxy; thread-kwargs dedup via `_watcher_kwargs()`; full monitor-closure lift to module scope descoped (heavy nonlocal-mutable coupling, untestable, marginal gain — re-affirms prior right-sizing) |
 | WRAP-4 | P2 | done | `supervisor.run_loop` shared restart skeleton |
 | WRAP-5 | P2 | **done** | `identity.handle_heartbeat_409(exc, client, agent, label, set_identity, on_recover=)` owns the catch->register->set-identity skeleton; both wrappers call it; the 409 logic literal lives only in identity.py |
-| WRAP-6 | P3 | **partial** | `1121894` `resolve_path` within config_loader; `_load.py` dup remains, no guard test |
+| WRAP-6 | P3 | **done (accept)** | `1121894` `resolve_path`; documented `_load.py` dup kept (bootstrap-ordering constraint), now protected by a drift-guard equivalence test |
 | NEW-WRAP-1 | P3 | **done** | `_queue_watcher` takes the shared `client`; the 3 `ServerClient`-per-call forwarders deleted; `ServerClient(` in wrapper.py → 1 |
 | FE-1 | P1 | done | `df0aec2` `api.js` + `wsClient.js` |
 | FE-2 | P2 | partial | `47a9895` only `escapeHtml` extracted; 5 helpers still in chat.js (blocked on FE-3) |
@@ -92,7 +92,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | WRAP-3 | Done (right-sized) | thread-kwargs deduped; closure-lift descoped (coupling/untestable) |
 | WRAP-4 | Done | supervisor.run_loop shared |
 | WRAP-5 | Done (B4) | handle_heartbeat_409 shared; +3 tests |
-| WRAP-6 | Accept | keep documented dup + drift test; decline shared-leaf (bootstrap constraint) |
+| WRAP-6 | Done (accept) | drift-guard test added; shared-leaf declined (bootstrap constraint) |
 | NEW-WRAP-1 | Done (B4) | thread shared client; 3 forwarders deleted |
 | FE-1 | Done | api.js + wsClient.js |
 | FE-2 | Do (after FE-3) | leaf move once state is in Store |
@@ -382,7 +382,7 @@ Shared infra landed (`Identity` + `ServerClient` consumed by wrapper_api.py). **
 - **Fix scope (修正範圍):** `identity.py` +~15 lines (helper); `wrapper.py` and `wrapper_api.py` each −~8 lines at the 409 branch. 3 files, 2 call sites.
 - **Completion criteria (達成條件):** the catch→register→set_identity sequence appears exactly once (in the helper); `grep '409'` in BOTH wrapper.py and wrapper_api.py → 0 (the literal lives only in identity.py); a unit test exercises the helper's 409 path (asserts register is called and the recovery callback fires); `test_identity` still green.
 
-#### WRAP-6 — `resolve_path` / `AGENTCHATTR_*` key set still duplicated cross-file (P3, partial)
+#### WRAP-6 — `resolve_path` / `AGENTCHATTR_*` key set still duplicated cross-file (P3, done)
 **Decision (定案):** **Accept the surface option; decline the architectural one.** Keep the ~6-line documented dup in `_load.py` and add a drift-guard equivalence test. The shared-importable-leaf option fights a real bootstrap-ordering constraint — `_load.py` runs before the install dir is located, so it cannot import `config_loader`. A stable dup behind an equivalence test beats a fragile vendored import. Revisit only if drift actually recurs.
 
 Landed within-file: `config_loader.resolve_path` (81) with `.expanduser()`, reused by `_apply_env_overrides` (110). **Not landed:** `templates/project/_load.py:32-39` hand-duplicates `resolve()` verbatim (its docstring admits the dup is intentional — `_load.py` runs before the install dir is located, so it cannot import `config_loader`). The `AGENTCHATTR_*` keys live in two files (config_loader `_ENV_OVERRIDES` + `CLI_OVERRIDE_FLAGS` vs `_load.py` print statements). No guard/sync test exists (`grep` across tests for `_load|resolve_path|AGENTCHATTR_ROOT|AGENT_CWD` → 0).
