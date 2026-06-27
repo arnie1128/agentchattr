@@ -20,7 +20,7 @@ Each structural item was committed individually (green tree + per-item five-dime
 | NEW-SRV-1 | P1 | **done** | fix `state.session_token` (app.py:757) + `/ws`-connect smoke test (test_ws_connect.py) |
 | NEW-SRV-6 | P1 | **done** | (found in B0 exec) `agents.py` imported is_online/is_active/get_role from mcp_bridge (moved to mcp_state by MCP-3) → ImportError in every `broadcast_status`; repointed to mcp_state |
 | NEW-SRV-2 | P1 | **done** | run.py boot-resume reads `state.session_engine` via a testable `resume_sessions_on_boot()` + startup smoke test |
-| NEW-SRV-3 | P3 | open | `version_check` local `state` shadows the app_state singleton (latent) |
+| NEW-SRV-3 | P3 | **done** | `version_check` local renamed to `release_state`; singleton no longer shadowed |
 | NEW-SRV-4 | P3 | open | `start_session` pokes `session_store._templates` directly (app.py:1914) |
 | NEW-SRV-5 | P3 | open | `/continue` handled in two places; WS path ignores the channel (app.py:847) |
 | STATE-1 | P1 | open | presence/identity/router still 3 reachability owners; 24 private pokes; never started |
@@ -71,7 +71,7 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | NEW-SRV-1 | Done (B0) | fixed: state.session_token + /ws smoke test |
 | NEW-SRV-6 | Done (B0) | fixed: agents.py repointed to mcp_state (was ImportError in broadcast_status) |
 | NEW-SRV-2 | Done (B0) | fixed: run.py resume_sessions_on_boot() reads state.session_engine + smoke test |
-| NEW-SRV-3 | Do (B0) | trivial rename; latent footgun in the P1 file |
+| NEW-SRV-3 | Done (B0) | renamed local to release_state |
 | NEW-SRV-4 | Do (B4) | public transient-template method |
 | NEW-SRV-5 | Do | fix channel-arg now (correctness); collapse dup B4 |
 | STATE-1 | Do (B1) | top structural P1; one reachable() predicate |
@@ -452,7 +452,7 @@ Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 exec
 | **NEW-SRV-1** | **P1** | `app.py:757` bare `session_token` → `NameError` on every `/ws` connect (live-UI regression) — **fixed (B0)** | §2 / Server |
 | **NEW-SRV-2** | **P1** | `run.py:113-114` undefined `session_engine` → `NameError` in the startup hook — **fixed (B0)** | §2 / Server |
 | **NEW-SRV-6** | **P1** | `agents.py` imported is_online/is_active/get_role from `mcp_bridge` after MCP-3 moved them to `mcp_state` → ImportError in every `broadcast_status` — **fixed (B0)** | Server / MCP |
-| NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) | Server |
+| NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) — **fixed (B0)** | Server |
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly | Server |
 | NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel | Server |
 | NEW-STATE-PERSIST-1 | P2 | ~9 store-save sites bare/no-fsync; `store._rewrite` truncates the message log in place | State |

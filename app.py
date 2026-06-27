@@ -2135,22 +2135,24 @@ async def version_check():
     install_kind = _detect_install_kind()
     comparison = _compare_versions(current, latest_tag)
 
+    # Local result var renamed off `state` so it can't shadow the app_state
+    # singleton imported module-wide (NEW-SRV-3); the JSON key stays "state".
     if comparison == "behind":
         if install_kind == "official_git":
-            state = "update_available"
+            release_state = "update_available"
         elif install_kind == "fork":
-            state = "upstream_update"
+            release_state = "upstream_update"
         else:
-            state = "unknown"
+            release_state = "unknown"
     elif comparison == "current":
-        state = "current"
+        release_state = "current"
     else:
-        state = "unknown"
+        release_state = "unknown"
 
     return JSONResponse({
         "current": current,
         "latest": latest_tag,
-        "state": state,
+        "state": release_state,
         "url": release.get("url", ""),
     })
 
