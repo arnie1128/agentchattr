@@ -754,7 +754,7 @@ def _on_registry_change():
 async def websocket_endpoint(websocket: WebSocket):
     # --- Security: validate session token on WebSocket connect ---
     token = websocket.query_params.get("token", "")
-    if token != session_token:
+    if token != state.session_token:
         # Must accept before closing so the browser receives the close frame.
         # Code 4003 triggers an auto-reload in the client to pick up the new token.
         await websocket.accept()

@@ -1,6 +1,6 @@
 # Architecture review — backlog
 
-Status: **Decided plan — every item below carries an explicit architectural decision (§0 summary + a per-item "Decision (定案)" line); nothing is left to "owner decision".** Fix first: SRV-2's app_state migration shipped two verified live `NameError`s — `app.py:757` (bare `session_token`, breaks every `/ws` connect) and `run.py:113` (undefined `session_engine`, breaks the startup hook), neither test-covered. Execution order: Batch 0 (the two NameErrors + smoke tests) -> Batch 1 (STATE-1 presence unification) -> Batch 2 (durability) -> Batch 3 (MCP proxy collapse) -> Batch 4 (god-module cleanups). Deferred by decision: STATE-7 (storage port — YAGNI, reactivate only on a real backend change). Scheduled, not deferred: FE-6 (message model — real defect, sequenced after FE-3). Date 2026-06-27 · Branch: `refactor/arch-backlog`.
+Status: **Decided plan — every item below carries an explicit architectural decision (§0 summary + a per-item "Decision (定案)" line); nothing is left to "owner decision".** Fix first: the SRV-2/MCP-3 migrations shipped dangling cross-module references with no boot/connect test to catch them — `app.py:757` bare `session_token` (NameError on every `/ws` connect — **fixed**), `run.py:113` undefined `session_engine` (NameError in the startup hook — pending), and NEW-SRV-6 `agents.py` importing presence fns from `mcp_bridge` after MCP-3 moved them to `mcp_state` (ImportError in every `broadcast_status` — **fixed**). Execution order: Batch 0 (the dangling-reference regressions + smoke tests) -> Batch 1 (STATE-1 presence unification) -> Batch 2 (durability) -> Batch 3 (MCP proxy collapse) -> Batch 4 (god-module cleanups). Deferred by decision: STATE-7 (storage port — YAGNI, reactivate only on a real backend change). Scheduled, not deferred: FE-6 (message model — real defect, sequenced after FE-3). Date 2026-06-27 · Branch: `refactor/arch-backlog`.
 
 ## Progress
 
@@ -17,7 +17,8 @@ Each structural item was committed individually (green tree + per-item five-dime
 | SRV-7 | P3 | open | monitor closures + FS-migration still inline in `configure()` |
 | SRV-8 | P3 | open | version-check + `_auto_cast` still inline (hats sub-item already done by SRV-6) |
 | BUG-1 / STATE-2 | P1 | done | `640b396` locked compare-and-advance + stale-snapshot reject (session_engine.py:287-294) |
-| NEW-SRV-1 | P1 | **open** | `app.py:757` bare `session_token` → `NameError` on every `/ws` connect |
+| NEW-SRV-1 | P1 | **done** | fix `state.session_token` (app.py:757) + `/ws`-connect smoke test (test_ws_connect.py) |
+| NEW-SRV-6 | P1 | **done** | (found in B0 exec) `agents.py` imported is_online/is_active/get_role from mcp_bridge (moved to mcp_state by MCP-3) → ImportError in every `broadcast_status`; repointed to mcp_state |
 | NEW-SRV-2 | P1 | **open** | `run.py:113-114` undefined `session_engine` → `NameError` in startup hook |
 | NEW-SRV-3 | P3 | open | `version_check` local `state` shadows the app_state singleton (latent) |
 | NEW-SRV-4 | P3 | open | `start_session` pokes `session_store._templates` directly (app.py:1914) |
@@ -67,7 +68,8 @@ Every item's disposition, decided on clean-architecture grounds. Detail + the th
 | SRV-7 | Do (B4) | extract presence_monitor/schedule_runner for testability |
 | SRV-8 | Do (B4) | low-risk leaf extraction |
 | BUG-1 / STATE-2 | Done | locked compare-and-advance |
-| NEW-SRV-1 | Do now (B0) | P1 live /ws NameError regression |
+| NEW-SRV-1 | Done (B0) | fixed: state.session_token + /ws smoke test |
+| NEW-SRV-6 | Done (B0) | fixed: agents.py repointed to mcp_state (was ImportError in broadcast_status) |
 | NEW-SRV-2 | Do now (B0) | P1 startup-hook NameError regression |
 | NEW-SRV-3 | Do (B0) | trivial rename; latent footgun in the P1 file |
 | NEW-SRV-4 | Do (B4) | public transient-template method |
@@ -443,12 +445,13 @@ chat.js = **4254 lines, 132 top-level functions**. Genuinely self-contained leav
 
 ## 4. New issues found this audit
 
-Eleven items are net-new this round (`isNew=true`). Full three-field detail lives in each item's subsystem section above; this is the index. **The two P1s are the only genuinely-misbehaving items in the whole backlog and must be fixed first.**
+Twelve items are net-new (`isNew=true`); NEW-SRV-6 was found during Batch 0 execution (the /ws smoke test surfaced it). Full detail lives in each item's subsystem section above; this is the index. **The genuinely-misbehaving regressions (NEW-SRV-1/2/6) are fixed first.**
 
 | ID | P | Summary | Where |
 |---|---|---|---|
-| **NEW-SRV-1** | **P1** | `app.py:757` bare `session_token` → `NameError` on every `/ws` connect (live-UI regression) | §2 / Server |
+| **NEW-SRV-1** | **P1** | `app.py:757` bare `session_token` → `NameError` on every `/ws` connect (live-UI regression) — **fixed (B0)** | §2 / Server |
 | **NEW-SRV-2** | **P1** | `run.py:113-114` undefined `session_engine` → `NameError` in the startup hook | §2 / Server |
+| **NEW-SRV-6** | **P1** | `agents.py` imported is_online/is_active/get_role from `mcp_bridge` after MCP-3 moved them to `mcp_state` → ImportError in every `broadcast_status` — **fixed (B0)** | Server / MCP |
 | NEW-SRV-3 | P3 | `version_check` local `state` shadows the app_state singleton (latent footgun) | Server |
 | NEW-SRV-4 | P3 | `start_session` pokes `session_store._templates` directly | Server |
 | NEW-SRV-5 | P3 | `/continue` in two places; WS path unpauses `general` regardless of channel | Server |
