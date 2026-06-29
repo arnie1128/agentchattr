@@ -610,6 +610,8 @@ Auto-trigger works on all platforms:
 
 The chat server and web UI are fully cross-platform (Python + browser).
 
+**Launcher file modes.** The launch chain uses `exec` (not `sh <file>`), so entry points need the executable bit. Keep these git modes when adding or syncing launcher scripts: entry wrappers (`launch.sh`, `launchers/macos-linux/*.sh`, and each instance's `start.sh` / `start_*.sh` / `open.sh`) → **`100755`** (a missing `+x` fails with `Permission denied`); source-only `_load.sh` → **`100644`** (sourced via `.`, never executed); Windows `*.cmd` / `*.bat` → **`100644`** (Windows ignores the Unix exec bit; line endings are forced to CRLF via `.gitattributes`).
+
 ## Security
 
 agentchattr is designed for **localhost use only** and includes several protections:
