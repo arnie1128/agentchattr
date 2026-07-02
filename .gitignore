@@ -26,3 +26,5 @@ agentchattr-*.zip
 /wrapper/target/
 # CodeGraph index (local, per-user — indexing is the owner's choice)
 /.codegraph/
+# Local Claude Code MCP registration (per-user tooling, e.g. codegraph)
+.mcp.json
